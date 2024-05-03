@@ -27,8 +27,13 @@ async fn main() -> anyhow::Result<()> {
 async fn handle_connection(mut stream: TcpStream) -> anyhow::Result<()> {
     let mut buf = BytesMut::with_capacity(1024);
     loop {
-        if let Ok(0) = stream.read_buf(&mut buf).await {
-            break;
+        match stream.read_buf(&mut buf).await {
+            Ok(0) => break,
+            Ok(_) => (),
+            Err(e) => {
+                eprintln!("{e}");
+                break;
+            }
         }
         stream.write_all(b"+PONG\r\n").await?;
     }
