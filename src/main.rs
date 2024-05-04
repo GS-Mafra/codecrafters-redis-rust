@@ -1,12 +1,15 @@
-use std::{fmt::Display, io::Cursor};
+use std::{collections::HashMap, io::Cursor, sync::RwLock};
 
 use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes, BytesMut};
+use once_cell::sync::Lazy;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::{TcpListener, TcpStream},
 };
+
+static DB: Lazy<RwLock<HashMap<String, Bytes>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,27 +45,41 @@ async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
 struct Command;
 
 impl Command {
+    fn set(k: String, v: Bytes) {
+        DB.write().unwrap().insert(k, v);
+        #[cfg(debug_assertions)]
+        eprintln!("{:?}", DB.read().unwrap());
+    }
+
+    fn get(k: &String) -> Option<Bytes> {
+        DB.read().unwrap().get(k).cloned()
+    }
+
     fn parse(value: &Resp) -> anyhow::Result<Resp> {
         match value {
             Resp::Array(values) => {
-                let mut values = values.iter().take(2);
-                let command = values.next().context("No command")?;
-                let value = values.next();
-
-                let Resp::Bulk(resp) = command else {
+                let mut values = values.iter();
+                let Some(Resp::Bulk(command)) = values.next() else {
                     return Err(anyhow::anyhow!("Expected bulk string"));
                 };
 
-                match resp.as_ref() {
-                    s if s.eq_ignore_ascii_case(b"ping") => Ok(Resp::Simple("PONG".into())),
-
-                    s if s.eq_ignore_ascii_case(b"echo") => {
-                        Ok(value.cloned().context("Missing ECHO value")?)
+                Ok(match command.to_ascii_lowercase().as_slice() {
+                    b"ping" => Resp::Simple("PONG".into()),
+                    b"echo" => values.next().cloned().context("Missing ECHO value")?,
+                    b"get" => {
+                        let key = values.next().context("Missing Key")?.as_string()?;
+                        Self::get(&key).map_or(Resp::Null, Resp::Bulk)
+                    }
+                    b"set" => {
+                        let key = values.next().context("Missing Key")?;
+                        let value = values.next().context("Missing Value")?;
+                        Self::set(key.as_string()?, value.as_string()?.into());
+                        Resp::Simple("OK".into())
                     }
                     _ => unimplemented!(),
-                }
+                })
             }
-            _ => Err(anyhow::anyhow!("Unsupported")),
+            _ => Err(anyhow::anyhow!("Unsupported RESP for command")),
         }
     }
 }
@@ -92,12 +109,6 @@ impl RespHandler {
         }
     }
 
-    async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
-        self.stream.write_all(format!("{resp}").as_bytes()).await?;
-        self.stream.flush().await?;
-        Ok(())
-    }
-
     fn parse(&mut self) -> anyhow::Result<Option<Resp>> {
         if self.buf.is_empty() {
             return Ok(None);
@@ -107,6 +118,41 @@ impl RespHandler {
         self.buf.advance(cur.position().try_into()?);
         resp
     }
+
+    async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
+        match resp {
+            Resp::Simple(inner) => {
+                self.stream.write_u8(b'+').await?;
+                self.stream.write_all(inner.as_bytes()).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
+            Resp::Bulk(inner) => {
+                self.stream.write_u8(b'$').await?;
+                self.write_int(inner.len()).await?;
+                self.stream.write_all(inner).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
+            Resp::Array(elems) => {
+                self.stream.write_u8(b'*').await?;
+                self.write_int(elems.len()).await?;
+                self.stream.write_all(b"\r\n").await?;
+                for resp in elems {
+                    Box::pin(self.write(resp)).await?;
+                }
+            }
+            Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
+        };
+        self.stream.flush().await?;
+        Ok(())
+    }
+
+    async fn write_int(&mut self, int: usize) -> anyhow::Result<()> {
+        use std::io::Write;
+        let mut bytes = Vec::with_capacity(3);
+        write!(bytes, "{int}\r\n")?;
+        self.stream.write_all(bytes.as_ref()).await?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -114,11 +160,16 @@ enum Resp {
     Simple(String),
     Bulk(Bytes),
     Array(Vec<Self>),
+    // NullBulk
+    Null,
 }
 
 impl Resp {
     fn parse(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
-        match cur.get_u8() {
+        #[cfg(debug_assertions)]
+        eprintln!("Parsing: {:?}", std::str::from_utf8(cur.chunk()));
+
+        Ok(match cur.get_u8() {
             b'*' => {
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
                 let mut elems = Vec::with_capacity(len);
@@ -126,35 +177,43 @@ impl Resp {
                 for _ in 0..len {
                     elems.push(Self::parse(cur)?);
                 }
-                Ok(Self::Array(elems))
+                Self::Array(elems)
             }
             b'+' => String::from_utf8(read_line(cur)?.to_vec())
                 .map(Self::Simple)
-                .map_err(anyhow::Error::from),
+                .map_err(anyhow::Error::from)?,
             b'$' => {
+                if &cur.chunk()[..2] == b"-1" {
+                    cur.advance(b"-1\r\n".len());
+                    return Ok(Self::Null);
+                }
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
 
                 let data = Bytes::copy_from_slice(&cur.chunk()[..len]);
                 cur.advance(len + b"\r\n".len());
-
-                Ok(Self::Bulk(data))
+                Self::Bulk(data)
             }
             c => unimplemented!("{:?}", c as char),
+        })
+    }
+
+    fn as_string(&self) -> anyhow::Result<String> {
+        match self {
+            Self::Bulk(resp) => String::from_utf8(resp.to_vec()).context("Invalid String"),
+            Self::Simple(resp) => Ok(resp.clone()),
+            _ => Err(anyhow::anyhow!("Not valid RESP for a string")),
         }
     }
 }
 
 fn read_line<'a>(cur: &mut Cursor<&'a [u8]>) -> anyhow::Result<&'a [u8]> {
-    let start = cur.position().try_into()?;
-    let end = cur.get_ref().len();
+    let chunk = cur.chunk();
+    let start = cur.get_ref().len() - chunk.len();
 
-    for i in start..end - 1 {
-        if cur.get_ref()[i] == b'\r' && cur.get_ref()[i + 1] == b'\n' {
-            cur.set_position((i + 2) as u64);
-            return Ok(&cur.get_ref()[start..i]);
-        }
+    if let Some(pos) = chunk.windows(2).position(|b| b == b"\r\n") {
+        cur.advance(pos + 2);
+        return Ok(&cur.get_ref()[start..pos + start]);
     }
-
     Err(anyhow::anyhow!("Failed to read line"))
 }
 
@@ -165,22 +224,51 @@ where
     atoi::atoi::<T>(slice).context("Failed to parse length")
 }
 
-impl Display for Resp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Simple(resp) => write!(f, "+{resp}\r\n")?,
-            Self::Bulk(resp) => {
-                if let Ok(resp) = std::str::from_utf8(resp) {
-                    write!(f, "${}\r\n{}\r\n", resp.len(), resp)?;
-                };
-            }
-            Self::Array(elems) => {
-                write!(f, "*{}\r\n", elems.len())?;
-                for resp in elems {
-                    resp.fmt(f)?;
-                }
-            }
-        };
-        Ok(())
+// impl Display for Resp {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         match self {
+//             Self::Simple(resp) => write!(f, "+{resp}\r\n")?,
+//             Self::Bulk(resp) => {
+//                 if let Ok(resp) = std::str::from_utf8(resp) {
+//                     write!(f, "${}\r\n{}\r\n", resp.len(), resp)?;
+//                 };
+//             }
+//             Self::Array(elems) => {
+//                 write!(f, "*{}\r\n", elems.len())?;
+//                 for resp in elems {
+//                     resp.fmt(f)?;
+//                 }
+//             }
+//             Self::Null => write!(f, "$-1\r\n")?,
+//         };
+//         Ok(())
+//     }
+// }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_resp() {
+        let echo = b"*2\r\n$4\r\necho\r\n$3\r\nhey\r\n";
+        let ping = b"*1\r\n$4\r\nping\r\n";
+
+        let resp = [echo.as_ref(), ping.as_ref()].concat();
+
+        let mut cur = Cursor::new(resp.as_ref());
+        let resp = |cur: &mut Cursor<&[u8]>| Resp::parse(cur).unwrap();
+
+        {
+            let expected = Resp::Array(vec![Resp::Bulk("echo".into()), Resp::Bulk("hey".into())]);
+            pretty_assertions::assert_eq!(resp(&mut cur), expected);
+        }
+        assert!(cur.remaining() == ping.len());
+        {
+            let expected = Resp::Array(vec![Resp::Bulk("ping".into())]);
+            pretty_assertions::assert_eq!(resp(&mut cur), expected);
+        }
+
+        assert!(!cur.has_remaining());
     }
 }
