@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::Cursor, sync::RwLock};
+use std::{
+    collections::HashMap,
+    io::Cursor,
+    sync::RwLock,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
@@ -9,7 +14,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-static DB: Lazy<RwLock<HashMap<String, Bytes>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static DB: Lazy<RwLock<HashMap<String, Value>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -42,17 +47,34 @@ async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Value {
+    inner: Bytes,
+    created: Instant,
+    expiration: Option<Duration>,
+}
+
 struct Command;
 
 impl Command {
-    fn set(k: String, v: Bytes) {
-        DB.write().unwrap().insert(k, v);
+    fn set(k: String, v: Bytes, px: Option<Duration>) {
+        let value = Value {
+            inner: v,
+            created: Instant::now(),
+            expiration: px,
+        };
+
+        DB.write().unwrap().insert(k, value);
         #[cfg(debug_assertions)]
         eprintln!("{:?}", DB.read().unwrap());
     }
 
-    fn get(k: &String) -> Option<Bytes> {
+    fn get(k: &str) -> Option<Value> {
         DB.read().unwrap().get(k).cloned()
+    }
+
+    fn del(k: &str) {
+        DB.write().unwrap().remove(k);
     }
 
     fn parse(value: &Resp) -> anyhow::Result<Resp> {
@@ -68,12 +90,32 @@ impl Command {
                     b"echo" => values.next().cloned().context("Missing ECHO value")?,
                     b"get" => {
                         let key = values.next().context("Missing Key")?.as_string()?;
-                        Self::get(&key).map_or(Resp::Null, Resp::Bulk)
+                        Self::get(&key)
+                            .and_then(|val| {
+                                if val.expiration.is_some_and(|px| px <= val.created.elapsed()) {
+                                    Self::del(&key);
+                                    None
+                                } else {
+                                    Some(val)
+                                }
+                            })
+                            .map_or(Resp::Null, |v| Resp::Bulk(v.inner))
                     }
                     b"set" => {
                         let key = values.next().context("Missing Key")?;
                         let value = values.next().context("Missing Value")?;
-                        Self::set(key.as_string()?, value.as_string()?.into());
+                        let px = {
+                            values
+                                .position(|x| *x == Resp::Bulk(b"px".as_ref().into()))
+                                .and_then(|pos| {
+                                    values
+                                        .nth(pos)
+                                        .and_then(|x| Resp::as_string(x).ok())
+                                        .and_then(|x| x.parse::<u64>().ok())
+                                        .map(Duration::from_millis)
+                                })
+                        };
+                        Self::set(key.as_string()?, value.as_string()?.into(), px);
                         Resp::Simple("OK".into())
                     }
                     _ => unimplemented!(),
@@ -223,27 +265,6 @@ where
 {
     atoi::atoi::<T>(slice).context("Failed to parse length")
 }
-
-// impl Display for Resp {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             Self::Simple(resp) => write!(f, "+{resp}\r\n")?,
-//             Self::Bulk(resp) => {
-//                 if let Ok(resp) = std::str::from_utf8(resp) {
-//                     write!(f, "${}\r\n{}\r\n", resp.len(), resp)?;
-//                 };
-//             }
-//             Self::Array(elems) => {
-//                 write!(f, "*{}\r\n", elems.len())?;
-//                 for resp in elems {
-//                     resp.fmt(f)?;
-//                 }
-//             }
-//             Self::Null => write!(f, "$-1\r\n")?,
-//         };
-//         Ok(())
-//     }
-// }
 
 #[cfg(test)]
 mod tests {
