@@ -92,7 +92,14 @@ impl Command {
                         let key = values.next().context("Missing Key")?.as_string()?;
                         Self::get(&key)
                             .and_then(|val| {
-                                if val.expiration.is_some_and(|px| px <= val.created.elapsed()) {
+                                let expired = val.expiration.is_some_and(|px| {
+                                    let time_passed = val.created.elapsed();
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("{time_passed:.02?} passed");
+                                    px <= time_passed
+                                });
+                                if expired {
+                                    eprintln!("{key} expired");
                                     Self::del(&key);
                                     None
                                 } else {
@@ -102,8 +109,8 @@ impl Command {
                             .map_or(Resp::Null, |v| Resp::Bulk(v.inner))
                     }
                     b"set" => {
-                        let key = values.next().context("Missing Key")?;
-                        let value = values.next().context("Missing Value")?;
+                        let key = values.next().context("Missing Key")?.as_string()?;
+                        let value = values.next().context("Missing Value")?.as_string()?;
                         let px = {
                             values
                                 .position(|x| *x == Resp::Bulk(b"px".as_ref().into()))
@@ -115,7 +122,7 @@ impl Command {
                                         .map(Duration::from_millis)
                                 })
                         };
-                        Self::set(key.as_string()?, value.as_string()?.into(), px);
+                        Self::set(key, value.into(), px);
                         Resp::Simple("OK".into())
                     }
                     _ => unimplemented!(),
@@ -189,10 +196,8 @@ impl RespHandler {
     }
 
     async fn write_int(&mut self, int: usize) -> anyhow::Result<()> {
-        use std::io::Write;
-        let mut bytes = Vec::with_capacity(3);
-        write!(bytes, "{int}\r\n")?;
-        self.stream.write_all(bytes.as_ref()).await?;
+        self.stream.write_all(int.to_string().as_bytes()).await?;
+        self.stream.write_all(b"\r\n").await?;
         Ok(())
     }
 }
@@ -211,7 +216,7 @@ impl Resp {
         #[cfg(debug_assertions)]
         eprintln!("Parsing: {:?}", std::str::from_utf8(cur.chunk()));
 
-        Ok(match cur.get_u8() {
+        let resp = match cur.get_u8() {
             b'*' => {
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
                 let mut elems = Vec::with_capacity(len);
@@ -224,10 +229,10 @@ impl Resp {
             b'+' => String::from_utf8(read_line(cur)?.to_vec())
                 .map(Self::Simple)
                 .map_err(anyhow::Error::from)?,
-            b'$' => {
+            b'$' => 'bulk: {
                 if &cur.chunk()[..2] == b"-1" {
                     cur.advance(b"-1\r\n".len());
-                    return Ok(Self::Null);
+                    break 'bulk Self::Null;
                 }
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
 
@@ -236,7 +241,11 @@ impl Resp {
                 Self::Bulk(data)
             }
             c => unimplemented!("{:?}", c as char),
-        })
+        };
+        #[cfg(debug_assertions)]
+        eprintln!("Parsed {resp:?}");
+
+        Ok(resp)
     }
 
     fn as_string(&self) -> anyhow::Result<String> {
