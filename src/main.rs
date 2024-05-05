@@ -1,14 +1,15 @@
-use std::{
-    collections::HashMap,
-    io::Cursor,
-    sync::RwLock,
-    time::{Duration, Instant},
-};
-
 use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes, BytesMut};
+use clap::Parser;
 use once_cell::sync::Lazy;
+use std::{
+    collections::HashMap,
+    io::Cursor,
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::RwLock,
+    time::{Duration, Instant},
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::{TcpListener, TcpStream},
@@ -16,9 +17,17 @@ use tokio::{
 
 static DB: Lazy<RwLock<HashMap<String, Value>>> = Lazy::new(|| RwLock::new(HashMap::new()));
 
+#[derive(Debug, Parser)]
+struct Args {
+    #[arg(long, default_value_t = 6379)]
+    port: u16,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let args = Args::parse();
+    let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), args.port);
+    let listener = TcpListener::bind(addr).await.unwrap();
 
     loop {
         match listener.accept().await {
