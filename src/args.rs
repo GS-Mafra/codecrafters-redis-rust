@@ -4,6 +4,9 @@ use std::{
 };
 
 use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
+use once_cell::sync::Lazy;
+
+pub static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
 
 #[derive(Debug, Parser)]
 pub struct Arguments {
@@ -15,12 +18,11 @@ pub struct Arguments {
 }
 
 impl Arguments {
-    #[allow(clippy::missing_panics_doc)]
     #[must_use]
     // https://docs.rs/clap/latest/clap/_derive/index.html#using-derived-arguments-in-a-builder-application
     pub fn parser() -> Self {
         let cli = Command::new(env!("CARGO_CRATE_NAME"))
-            .arg(arg!(--replicaof).action(ArgAction::Append).num_args(2..3));
+            .arg(arg!(--replicaof).action(ArgAction::Append).num_args(2));
 
         let cli = Self::augment_args(cli);
         let mut matches = cli.get_matches();
