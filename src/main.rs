@@ -1,7 +1,6 @@
 use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes, BytesMut};
-use clap::Parser;
 use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
@@ -15,18 +14,18 @@ use tokio::{
     net::{TcpListener, TcpStream},
 };
 
-static DB: Lazy<RwLock<HashMap<String, Value>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+use redis_starter_rust::Arguments;
 
-#[derive(Debug, Parser)]
-struct Args {
-    #[arg(long, default_value_t = 6379)]
-    port: u16,
-}
+static DB: Lazy<RwLock<HashMap<String, Value>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), args.port);
+    Lazy::force(&ARGUMENTS);
+    debug_print!("{ARGUMENTS:#?}");
+
+    // TODO
+    let addr = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), ARGUMENTS.port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
     loop {
@@ -131,6 +130,15 @@ impl Command {
                         };
                         Self::set(key, value.into(), px);
                         Resp::Simple("OK".into())
+                    }
+                    b"info" => {
+                        let Some(Resp::Bulk(arg)) = values.next() else {
+                            return Err(anyhow::anyhow!("Missing arg"))
+                        };
+                        match arg.to_ascii_lowercase().as_slice() {
+                            b"replication" => Resp::Bulk(ARGUMENTS.role.to_string().into()),
+                            _ => todo!("{arg:?}"),
+                        }
                     }
                     _ => unimplemented!(),
                 })
