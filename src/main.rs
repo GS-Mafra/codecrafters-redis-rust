@@ -65,8 +65,7 @@ impl Command {
         };
 
         DB.write().unwrap().insert(k, value);
-        #[cfg(debug_assertions)]
-        eprintln!("{:?}", DB.read().unwrap());
+        debug_print!("{:?}", DB.read().unwrap());
     }
 
     fn get(k: &str) -> Option<Value> {
@@ -94,8 +93,7 @@ impl Command {
                             .and_then(|val| {
                                 let expired = val.expiration.is_some_and(|px| {
                                     let time_passed = val.created.elapsed();
-                                    #[cfg(debug_assertions)]
-                                    eprintln!("{time_passed:.02?} passed");
+                                    debug_print!("{time_passed:.02?} passed");
                                     px <= time_passed
                                 });
                                 if expired {
@@ -213,8 +211,7 @@ enum Resp {
 
 impl Resp {
     fn parse(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
-        #[cfg(debug_assertions)]
-        eprintln!("Parsing: {:?}", std::str::from_utf8(cur.chunk()));
+        debug_print!("Parsing: {:?}", std::str::from_utf8(cur.chunk()));
 
         let resp = match cur.get_u8() {
             b'*' => {
@@ -242,8 +239,7 @@ impl Resp {
             }
             c => unimplemented!("{:?}", c as char),
         };
-        #[cfg(debug_assertions)]
-        eprintln!("Parsed {resp:?}");
+        debug_print!("Parsed {resp:?}");
 
         Ok(resp)
     }
@@ -273,6 +269,18 @@ where
     T: FromRadix10SignedChecked,
 {
     atoi::atoi::<T>(slice).context("Failed to parse length")
+}
+
+#[macro_export]
+macro_rules! debug_print {
+    ($($x:tt)*) => {
+        {
+            #[cfg(debug_assertions)]
+            {
+                eprintln!($($x)*)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
