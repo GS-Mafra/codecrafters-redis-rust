@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use std::{fmt::Display, time::Duration};
 
-use crate::{Resp, Role, ARGUMENTS, DB};
+use crate::{Resp, Role, DB};
 
 pub struct Command;
 
@@ -18,7 +18,7 @@ impl Command {
                     b"echo" => Self::echo(values)?,
                     b"get" => Self::get(values)?,
                     b"set" => Self::set(values)?,
-                    b"info" => Self::info(values),
+                    b"info" => Self::info(values, role),
                     b"replconf" => Self::replconf(),
                     b"psync" => Self::psync(values, role)?,
                     _ => unimplemented!(),
@@ -67,21 +67,21 @@ impl Command {
         Ok(Resp::Simple("OK".into()))
     }
 
-    fn info<'a, I>(i: I) -> Resp
+    fn info<'a, I>(i: I, role: &Role) -> Resp
     where
         I: IntoIterator<Item = &'a Resp>,
     {
         let Some(Resp::Bulk(arg)) = i.into_iter().next() else {
             // TODO return all sections
             let resp = Info {
-                replication: Some(Replication::new(&ARGUMENTS.role)),
+                replication: Some(Replication::new(role)),
             };
             return Resp::Bulk(resp.to_string().into());
         };
 
         let resp = match arg.to_ascii_lowercase().as_slice() {
             b"replication" => Info {
-                replication: Some(Replication::new(&ARGUMENTS.role)),
+                replication: Some(Replication::new(role)),
             },
 
             _ => todo!("{arg:?}"),
