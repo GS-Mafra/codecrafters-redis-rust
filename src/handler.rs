@@ -92,15 +92,8 @@ impl Handler {
         self.stream.write_all(bytes.len().to_string().as_bytes()).await?;
         self.stream.write_all(b"\r\n").await?;
         self.stream.write_all(bytes.as_ref()).await?;
+        self.stream.flush().await?;
         Ok(())
-    }
-
-    async fn read_bytes(&mut self) -> anyhow::Result<()> {
-        loop {
-        if 0 == self.stream.read_buf(&mut self.buf).await? {
-            return Ok(());
-        }
-    }
     }
 }
 
@@ -148,8 +141,6 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         Resp::Array(vec![psync, id, offset])
     };
     handler.write(&resp).await?;
-
-    handler.read_bytes().await?;
 
     Ok(handler)
 }
