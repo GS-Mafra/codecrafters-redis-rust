@@ -1,7 +1,4 @@
-use std::{
-    fmt::Display,
-    net::{Ipv4Addr, SocketAddrV4},
-};
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
 use once_cell::sync::Lazy;
@@ -55,21 +52,19 @@ impl Arguments {
 
 #[derive(Debug, Clone)]
 pub enum Role {
-    Master,
+    Master {
+        master_replid: String,
+        master_repl_offset: u64,
+    },
     Slave(SocketAddrV4),
 }
 
 impl Default for Role {
     fn default() -> Self {
-        Self::Master
-    }
-}
-
-impl Display for Role {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Master => write!(f, "role:master"),
-            Self::Slave(_) => write!(f, "role:slave"),
+        Self::Master {
+            // TODO random
+            master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".into(),
+            master_repl_offset: 0,
         }
     }
 }

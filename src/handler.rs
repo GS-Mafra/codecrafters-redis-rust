@@ -57,7 +57,6 @@ impl Handler {
             Resp::Array(elems) => {
                 self.stream.write_u8(b'*').await?;
                 self.write_int(elems.len()).await?;
-                self.stream.write_all(b"\r\n").await?;
                 for resp in elems {
                     Box::pin(self.write(resp)).await?;
                 }

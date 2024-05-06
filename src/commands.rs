@@ -1,4 +1,4 @@
-use crate::{args::Role, DB, Resp, ARGUMENTS};
+use crate::{args::Role, Resp, ARGUMENTS, DB};
 use anyhow::Context;
 use std::{fmt::Display, time::Duration};
 
@@ -17,7 +17,7 @@ impl Command {
                     b"echo" => Self::echo(values)?,
                     b"get" => Self::get(values)?,
                     b"set" => Self::set(values)?,
-                    b"info" => Self::info(values)?,
+                    b"info" => Self::info(values),
                     _ => unimplemented!(),
                 })
             }
@@ -64,37 +64,41 @@ impl Command {
         Ok(Resp::Simple("OK".into()))
     }
 
-    fn info<'a, I>(i: I) -> anyhow::Result<Resp>
+    fn info<'a, I>(i: I) -> Resp
     where
         I: IntoIterator<Item = &'a Resp>,
     {
         let Some(Resp::Bulk(arg)) = i.into_iter().next() else {
             // TODO return all sections
-            return Err(anyhow::anyhow!("Missing arg"));
+            let resp = Info {
+                replication: Some(Replication::new(&ARGUMENTS.role)),
+            };
+            return Resp::Bulk(resp.to_string().into());
         };
+
         let resp = match arg.to_ascii_lowercase().as_slice() {
             b"replication" => Info {
-                replication: Some(Replication {
-                    role: &ARGUMENTS.role,
-                }),
+                replication: Some(Replication::new(&ARGUMENTS.role)),
             },
 
             _ => todo!("{arg:?}"),
         };
-        Ok(Resp::Bulk(resp.to_string().into()))
+        Resp::Bulk(resp.to_string().into())
     }
 }
 
+#[derive(Debug)]
 struct Info<'a> {
     replication: Option<Replication<'a>>,
     // TODO
 }
 
+#[derive(Debug)]
 struct Replication<'a> {
     role: &'a Role,
     // connected_slaves:
-    // master_replid:
-    // master_repl_offset:
+    master_replid: Option<&'a str>,
+    master_repl_offset: Option<u64>,
     // second_repl_offset:
     // repl_backlog_active:
     // repl_backlog_size:
@@ -102,11 +106,47 @@ struct Replication<'a> {
     // repl_backlog_histlen:
 }
 
+impl<'a> Replication<'a> {
+    fn new(role: &'a Role) -> Self {
+        match role {
+            Role::Master {
+                master_replid,
+                master_repl_offset,
+            } => Self {
+                role,
+                master_replid: Some(master_replid),
+                master_repl_offset: Some(*master_repl_offset),
+            },
+            Role::Slave(_) => Self {
+                role,
+                master_replid: None,
+                master_repl_offset: None,
+            },
+        }
+    }
+}
+
 impl<'a> Display for Replication<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { role } = self;
+        let Self {
+            role,
+            master_replid,
+            master_repl_offset,
+        } = self;
         write!(f, "# Replication\r\n")?;
-        write!(f, "{role}\r\n")?;
+
+        match role {
+            Role::Master { .. } => write!(f, "role:master")?,
+            Role::Slave(_) => write!(f, "role:slave")?,
+        }
+        f.write_str("\r\n")?;
+
+        if let Some(master_replid) = master_replid {
+            write!(f, "master_replid:{master_replid}\r\n")?;
+        }
+        if let Some(master_repl_offset) = master_repl_offset {
+            write!(f, "master_repl_offset:{master_repl_offset}\r\n")?;
+        }
         Ok(())
     }
 }
