@@ -1,4 +1,3 @@
-use anyhow::Context;
 use once_cell::sync::Lazy;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::{TcpListener, TcpStream};
@@ -13,9 +12,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    let _slave = connect_slave(&ARGUMENTS.role, ARGUMENTS.port)
-        .await
-        .with_context(|| format!("Failed to connect to master at {addr}"))?;
+    let _slave = connect_slave(&ARGUMENTS.role, ARGUMENTS.port).await?;
 
     loop {
         match listener.accept().await {

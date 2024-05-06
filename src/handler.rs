@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 use tokio::{
@@ -78,7 +78,9 @@ impl Handler {
 
 pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
     if let Role::Slave(addr) = role {
-        let master = TcpStream::connect(addr).await?;
+        let master = TcpStream::connect(addr)
+            .await
+            .with_context(|| format!("Failed to connect to master at {addr}"))?;
         let handler = handshake(master, port).await?;
         Ok(Some(handler))
     } else {

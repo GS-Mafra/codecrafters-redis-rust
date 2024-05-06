@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use std::{fmt::Display, time::Duration};
 
 use crate::{args::Role, Resp, ARGUMENTS, DB};
@@ -11,7 +11,7 @@ impl Command {
             Resp::Array(values) => {
                 let mut values = values.iter();
                 let Some(Resp::Bulk(command)) = values.next() else {
-                    return Err(anyhow::anyhow!("Expected bulk string"));
+                    bail!("Expected bulk string");
                 };
                 Ok(match command.to_ascii_lowercase().as_slice() {
                     b"ping" => Self::ping(),
