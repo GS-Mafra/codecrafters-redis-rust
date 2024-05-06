@@ -4,6 +4,7 @@ use std::{fmt::Display, time::Duration};
 
 use crate::{Resp, Role, DB};
 
+#[derive(Debug)]
 pub struct Command {
     pub resp: Resp,
     pub data: Option<Bytes>,

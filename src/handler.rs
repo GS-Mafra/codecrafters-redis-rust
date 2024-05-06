@@ -94,6 +94,14 @@ impl Handler {
         self.stream.write_all(bytes.as_ref()).await?;
         Ok(())
     }
+
+    async fn read_bytes(&mut self) -> anyhow::Result<()> {
+        loop {
+        if 0 == self.stream.read_buf(&mut self.buf).await? {
+            return Ok(());
+        }
+    }
+    }
 }
 
 pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
@@ -140,6 +148,8 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         Resp::Array(vec![psync, id, offset])
     };
     handler.write(&resp).await?;
+
+    handler.read_bytes().await?;
 
     Ok(handler)
 }
