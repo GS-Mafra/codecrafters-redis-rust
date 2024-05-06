@@ -7,7 +7,7 @@ pub mod commands;
 pub use commands::Command;
 
 pub mod handler;
-pub use handler::Handler;
+pub use handler::{Handler, connect_slave};
 
 mod resp;
 pub(crate) use resp::Resp;

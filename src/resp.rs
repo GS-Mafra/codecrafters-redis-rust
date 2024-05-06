@@ -1,8 +1,7 @@
-use std::io::Cursor;
-
 use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes};
+use std::io::Cursor;
 
 use crate::debug_print;
 

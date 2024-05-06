@@ -1,10 +1,11 @@
-use std::io::Cursor;
-
 use bytes::{Buf, BytesMut};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufWriter}, net::TcpStream};
+use std::io::Cursor;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, BufWriter},
+    net::TcpStream,
+};
 
-use crate::Resp;
-
+use crate::{args::Role, Resp};
 
 pub struct Handler {
     stream: BufWriter<TcpStream>,
@@ -42,34 +43,48 @@ impl Handler {
     }
 
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
-        match resp {
-            Resp::Simple(inner) => {
-                self.stream.write_u8(b'+').await?;
-                self.stream.write_all(inner.as_bytes()).await?;
-                self.stream.write_all(b"\r\n").await?;
-            }
-            Resp::Bulk(inner) => {
-                self.stream.write_u8(b'$').await?;
-                self.write_int(inner.len()).await?;
-                self.stream.write_all(inner).await?;
-                self.stream.write_all(b"\r\n").await?;
-            }
-            Resp::Array(elems) => {
-                self.stream.write_u8(b'*').await?;
-                self.write_int(elems.len()).await?;
-                for resp in elems {
-                    Box::pin(self.write(resp)).await?;
-                }
-            }
-            Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
-        };
-        self.stream.flush().await?;
-        Ok(())
+        write_to(&mut self.stream, resp).await
     }
+}
 
-    async fn write_int(&mut self, int: usize) -> anyhow::Result<()> {
-        self.stream.write_all(int.to_string().as_bytes()).await?;
-        self.stream.write_all(b"\r\n").await?;
-        Ok(())
+async fn write_to<S>(stream: &mut S, resp: &Resp) -> anyhow::Result<()>
+where
+    S: AsyncWriteExt + std::marker::Unpin + std::marker::Send,
+{
+    match resp {
+        Resp::Simple(inner) => {
+            stream.write_u8(b'+').await?;
+            stream.write_all(inner.as_bytes()).await?;
+            stream.write_all(b"\r\n").await?;
+        }
+        Resp::Bulk(inner) => {
+            stream.write_u8(b'$').await?;
+            stream.write_all(inner.len().to_string().as_bytes()).await?;
+            stream.write_all(b"\r\n").await?;
+            stream.write_all(inner).await?;
+            stream.write_all(b"\r\n").await?;
+        }
+        Resp::Array(elems) => {
+            stream.write_u8(b'*').await?;
+            stream.write_all(elems.len().to_string().as_bytes()).await?;
+            stream.write_all(b"\r\n").await?;
+            for resp in elems {
+                Box::pin(write_to(stream, resp)).await?;
+            }
+        }
+        Resp::Null => stream.write_all(b"$-1\r\n").await?,
+    };
+    stream.flush().await?;
+    Ok(())
+}
+
+pub async fn connect_slave(role: &Role) -> anyhow::Result<Option<TcpStream>> {
+    if let Role::Slave(addr) = role {
+        let mut master = TcpStream::connect(addr).await?;
+        let resp = Resp::Array(vec![Resp::Bulk("PING".into())]);
+        write_to(&mut master, &resp).await?;
+        Ok(Some(master))
+    } else {
+        Ok(None)
     }
 }

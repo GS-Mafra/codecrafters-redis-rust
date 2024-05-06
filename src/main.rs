@@ -1,17 +1,21 @@
+use anyhow::Context;
 use once_cell::sync::Lazy;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use tokio::net::{TcpListener, TcpStream};
 
-use redis_starter_rust::{debug_print, Command, Handler, ARGUMENTS};
+use redis_starter_rust::{connect_slave, debug_print, Command, Handler, ARGUMENTS};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     Lazy::force(&ARGUMENTS);
     debug_print!("{:#?}", &*ARGUMENTS);
 
-    // TODO
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port);
     let listener = TcpListener::bind(addr).await.unwrap();
+
+    let _slave = connect_slave(&ARGUMENTS.role)
+        .await
+        .with_context(|| format!("Failed to connect to master at {addr}"))?;
 
     loop {
         match listener.accept().await {

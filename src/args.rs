@@ -1,7 +1,6 @@
-use std::net::{Ipv4Addr, SocketAddrV4};
-
 use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
 use once_cell::sync::Lazy;
+use std::net::{Ipv4Addr, SocketAddrV4};
 
 pub static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
 

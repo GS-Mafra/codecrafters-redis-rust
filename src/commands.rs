@@ -1,6 +1,7 @@
-use crate::{args::Role, Resp, ARGUMENTS, DB};
 use anyhow::Context;
 use std::{fmt::Display, time::Duration};
+
+use crate::{args::Role, Resp, ARGUMENTS, DB};
 
 pub struct Command;
 
