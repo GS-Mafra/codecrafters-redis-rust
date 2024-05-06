@@ -1,5 +1,6 @@
 use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
 use once_cell::sync::Lazy;
+use rand::{distributions::Alphanumeric, Rng};
 use std::net::{Ipv4Addr, SocketAddrV4};
 
 pub static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
@@ -65,8 +66,11 @@ pub enum Role {
 impl Default for Role {
     fn default() -> Self {
         Self::Master {
-            // TODO random
-            master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".into(),
+            master_replid: rand::thread_rng()
+                .sample_iter(Alphanumeric)
+                .take(40)
+                .map(char::from)
+                .collect(),
             master_repl_offset: 0,
         }
     }

@@ -66,7 +66,6 @@ impl Db {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::thread::sleep;

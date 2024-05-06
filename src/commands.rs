@@ -1,12 +1,12 @@
 use anyhow::{bail, Context};
 use std::{fmt::Display, time::Duration};
 
-use crate::{args::Role, Resp, ARGUMENTS, DB};
+use crate::{Resp, Role, ARGUMENTS, DB};
 
 pub struct Command;
 
 impl Command {
-    pub fn parse(value: &Resp) -> anyhow::Result<Resp> {
+    pub fn parse(value: &Resp, role: &Role) -> anyhow::Result<Resp> {
         match value {
             Resp::Array(values) => {
                 let mut values = values.iter();
@@ -20,7 +20,7 @@ impl Command {
                     b"set" => Self::set(values)?,
                     b"info" => Self::info(values),
                     b"replconf" => Self::replconf(),
-                    b"psync" => Self::psync(values)?,
+                    b"psync" => Self::psync(values, role)?,
                     _ => unimplemented!(),
                 })
             }
@@ -94,15 +94,24 @@ impl Command {
         Resp::Simple("OK".into())
     }
 
-    fn psync<'a, I>(i: I) -> anyhow::Result<Resp>
+    fn psync<'a, I>(i: I, role: &Role) -> anyhow::Result<Resp>
     where
         I: IntoIterator<Item = &'a Resp>,
     {
         let mut i = i.into_iter();
-        let _id = i.next().context("Expected id")?.as_string()?;
+        let _id = i.next().context("Expected id")?;
         let _offset = i.next().context("Expected offset")?;
 
-        Ok(Resp::Simple("FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0".into()))
+        let Role::Master {
+            master_replid,
+            master_repl_offset,
+        } = role
+        else {
+            panic!("Expected master")
+        };
+        Ok(Resp::Simple(format!(
+            "FULLRESYNC {master_replid} {master_repl_offset}"
+        )))
     }
 }
 

@@ -50,7 +50,7 @@ impl Handler {
             Err(crate::resp::Error::Incomplete) => {
                 debug_print!("Resp was incomplete");
                 Ok(None)
-            },
+            }
             Err(e) => Err(e.into()),
         }
     }
@@ -132,8 +132,6 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         Resp::Array(vec![psync, id, offset])
     };
     handler.write(&resp).await?;
-    // TODO
-    // check_handshake(&mut handler, "FULLRESYNC <?> 0").await?;
 
     Ok(handler)
 }
