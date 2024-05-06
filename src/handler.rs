@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::{args::Role, Resp};
+use crate::{args::Role, debug_print, Resp};
 
 pub struct Handler {
     stream: BufWriter<TcpStream>,
@@ -17,7 +17,7 @@ impl Handler {
     pub fn new(stream: TcpStream) -> Self {
         Self {
             stream: BufWriter::new(stream),
-            buf: BytesMut::with_capacity(1024),
+            buf: BytesMut::with_capacity(1024 * 4),
         }
     }
 
@@ -38,9 +38,21 @@ impl Handler {
             return Ok(None);
         }
         let mut cur = Cursor::new(self.buf.as_ref());
-        let resp = Resp::parse(&mut cur).map(Option::Some);
-        self.buf.advance(cur.position().try_into()?);
-        resp
+
+        match Resp::check(&mut cur) {
+            Ok(()) => {
+                let len = cur.position().try_into()?;
+                cur.set_position(0);
+                let resp = Resp::parse(&mut cur).map(Option::Some);
+                self.buf.advance(len);
+                resp
+            }
+            Err(crate::resp::Error::Incomplete) => {
+                debug_print!("Resp was incomplete");
+                Ok(None)
+            },
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
@@ -112,6 +124,16 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     };
     handler.write(&resp).await?;
     check_handshake(&mut handler, "OK").await?;
+
+    let resp = {
+        let psync = Resp::Bulk("PSYNC".into());
+        let id = Resp::Bulk("?".into());
+        let offset = Resp::Bulk("-1".into());
+        Resp::Array(vec![psync, id, offset])
+    };
+    handler.write(&resp).await?;
+    // TODO
+    // check_handshake(&mut handler, "FULLRESYNC <?> 0").await?;
 
     Ok(handler)
 }

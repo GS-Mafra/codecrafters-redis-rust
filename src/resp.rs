@@ -2,8 +2,17 @@ use anyhow::Context;
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes};
 use std::io::Cursor;
+use thiserror::Error;
 
 use crate::debug_print;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Incomplete resp")]
+    Incomplete,
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Resp {
@@ -33,13 +42,13 @@ impl Resp {
                 .map_err(anyhow::Error::from)?,
             b'$' => 'bulk: {
                 if &cur.chunk()[..2] == b"-1" {
-                    cur.advance(b"-1\r\n".len());
+                    advance(cur, b"-1\r\n".len())?;
                     break 'bulk Self::Null;
                 }
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
 
                 let data = Bytes::copy_from_slice(&cur.chunk()[..len]);
-                cur.advance(len + b"\r\n".len());
+                advance(cur, len + b"\r\n".len())?;
                 Self::Bulk(data)
             }
             c => unimplemented!("{:?}", c as char),
@@ -47,6 +56,32 @@ impl Resp {
         debug_print!("Parsed {resp:?}");
 
         Ok(resp)
+    }
+
+    pub fn check(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
+        match get_u8(cur)? {
+            b'*' => {
+                let len = slice_to_int::<usize>(read_line(cur)?)?;
+
+                for _ in 0..len {
+                    Self::check(cur)?;
+                }
+            }
+            b'+' => {
+                read_line(cur)?;
+            }
+            b'$' => 'bulk: {
+                if &cur.chunk()[..2] == b"-1" {
+                    advance(cur, b"-1\r\n".len())?;
+                    break 'bulk;
+                }
+                let len = slice_to_int::<usize>(read_line(cur)?)?;
+
+                advance(cur, len + b"\r\n".len())?;
+            }
+            c => unimplemented!("{:?}", c as char),
+        }
+        Ok(())
     }
 
     pub(crate) fn as_string(&self) -> anyhow::Result<String> {
@@ -58,15 +93,29 @@ impl Resp {
     }
 }
 
-fn read_line<'a>(cur: &mut Cursor<&'a [u8]>) -> anyhow::Result<&'a [u8]> {
+fn get_u8(cur: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+    if !cur.has_remaining() {
+        return Err(Error::Incomplete);
+    }
+    Ok(cur.get_u8())
+}
+
+fn advance(cur: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
+    if cur.remaining() < n {
+        return Err(Error::Incomplete);
+    }
+    cur.advance(n);
+    Ok(())
+}
+
+fn read_line<'a>(cur: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
     let chunk = cur.chunk();
     let start = cur.get_ref().len() - chunk.len();
-
     if let Some(pos) = chunk.windows(2).position(|b| b == b"\r\n") {
-        cur.advance(pos + 2);
+        advance(cur, pos + 2)?;
         return Ok(&cur.get_ref()[start..pos + start]);
     }
-    Err(anyhow::anyhow!("Failed to read line"))
+    Err(Error::Incomplete)
 }
 
 fn slice_to_int<T>(slice: &[u8]) -> anyhow::Result<T>

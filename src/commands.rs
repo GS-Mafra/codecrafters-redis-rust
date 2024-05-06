@@ -20,6 +20,7 @@ impl Command {
                     b"set" => Self::set(values)?,
                     b"info" => Self::info(values),
                     b"replconf" => Self::replconf(),
+                    b"psync" => Self::psync(values)?,
                     _ => unimplemented!(),
                 })
             }
@@ -91,6 +92,17 @@ impl Command {
     fn replconf() -> Resp {
         // TODO
         Resp::Simple("OK".into())
+    }
+
+    fn psync<'a, I>(i: I) -> anyhow::Result<Resp>
+    where
+        I: IntoIterator<Item = &'a Resp>,
+    {
+        let mut i = i.into_iter();
+        let id = i.next().context("Expected id")?.as_string()?;
+        let _offset = i.next().context("Expected offset")?;
+
+        Ok(Resp::Simple(format!("FULLRESYNC <{id}> 0")))
     }
 }
 
