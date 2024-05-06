@@ -13,7 +13,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    let _slave = connect_slave(&ARGUMENTS.role)
+    let _slave = connect_slave(&ARGUMENTS.role, ARGUMENTS.port)
         .await
         .with_context(|| format!("Failed to connect to master at {addr}"))?;
 

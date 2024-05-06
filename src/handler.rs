@@ -1,3 +1,4 @@
+use anyhow::bail;
 use bytes::{Buf, BytesMut};
 use std::io::Cursor;
 use tokio::{
@@ -43,48 +44,80 @@ impl Handler {
     }
 
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
-        write_to(&mut self.stream, resp).await
+        match resp {
+            Resp::Simple(inner) => {
+                self.stream.write_u8(b'+').await?;
+                self.stream.write_all(inner.as_bytes()).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
+            Resp::Bulk(inner) => {
+                self.stream.write_u8(b'$').await?;
+                self.stream
+                    .write_all(inner.len().to_string().as_bytes())
+                    .await?;
+                self.stream.write_all(b"\r\n").await?;
+                self.stream.write_all(inner).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
+            Resp::Array(elems) => {
+                self.stream.write_u8(b'*').await?;
+                self.stream
+                    .write_all(elems.len().to_string().as_bytes())
+                    .await?;
+                self.stream.write_all(b"\r\n").await?;
+                for resp in elems {
+                    Box::pin(self.write(resp)).await?;
+                }
+            }
+            Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
+        };
+        self.stream.flush().await?;
+        Ok(())
     }
 }
 
-async fn write_to<S>(stream: &mut S, resp: &Resp) -> anyhow::Result<()>
-where
-    S: AsyncWriteExt + std::marker::Unpin + std::marker::Send,
-{
-    match resp {
-        Resp::Simple(inner) => {
-            stream.write_u8(b'+').await?;
-            stream.write_all(inner.as_bytes()).await?;
-            stream.write_all(b"\r\n").await?;
-        }
-        Resp::Bulk(inner) => {
-            stream.write_u8(b'$').await?;
-            stream.write_all(inner.len().to_string().as_bytes()).await?;
-            stream.write_all(b"\r\n").await?;
-            stream.write_all(inner).await?;
-            stream.write_all(b"\r\n").await?;
-        }
-        Resp::Array(elems) => {
-            stream.write_u8(b'*').await?;
-            stream.write_all(elems.len().to_string().as_bytes()).await?;
-            stream.write_all(b"\r\n").await?;
-            for resp in elems {
-                Box::pin(write_to(stream, resp)).await?;
-            }
-        }
-        Resp::Null => stream.write_all(b"$-1\r\n").await?,
-    };
-    stream.flush().await?;
-    Ok(())
-}
-
-pub async fn connect_slave(role: &Role) -> anyhow::Result<Option<TcpStream>> {
+pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
     if let Role::Slave(addr) = role {
-        let mut master = TcpStream::connect(addr).await?;
-        let resp = Resp::Array(vec![Resp::Bulk("PING".into())]);
-        write_to(&mut master, &resp).await?;
-        Ok(Some(master))
+        let master = TcpStream::connect(addr).await?;
+        let handler = handshake(master, port).await?;
+        Ok(Some(handler))
     } else {
         Ok(None)
     }
+}
+
+async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
+    let mut handler = Handler::new(stream);
+
+    let resp = Resp::Array(vec![Resp::Bulk("PING".into())]);
+    handler.write(&resp).await?;
+    check_handshake(&mut handler, "PONG").await?;
+
+    let resp = {
+        let replconf = Resp::Bulk("REPLCONF".into());
+        let listening_port = Resp::Bulk("listening-port".into());
+        let port = Resp::Bulk(port.to_string().into());
+        Resp::Array(vec![replconf, listening_port, port])
+    };
+    handler.write(&resp).await?;
+    check_handshake(&mut handler, "OK").await?;
+
+    let resp = {
+        let replconf = Resp::Bulk("REPLCONF".into());
+        let capa = Resp::Bulk("capa".into());
+        let the_capas = Resp::Bulk("psync2".into());
+        Resp::Array(vec![replconf, capa, the_capas])
+    };
+    handler.write(&resp).await?;
+    check_handshake(&mut handler, "OK").await?;
+
+    Ok(handler)
+}
+
+async fn check_handshake(handler: &mut Handler, msg: &str) -> anyhow::Result<()> {
+    let recv = handler.read().await?;
+    if !recv.is_some_and(|x| Resp::Simple(msg.into()) == x) {
+        bail!("Expected {msg}")
+    }
+    Ok(())
 }

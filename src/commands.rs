@@ -19,6 +19,7 @@ impl Command {
                     b"get" => Self::get(values)?,
                     b"set" => Self::set(values)?,
                     b"info" => Self::info(values),
+                    b"replconf" => Self::replconf(),
                     _ => unimplemented!(),
                 })
             }
@@ -85,6 +86,11 @@ impl Command {
             _ => todo!("{arg:?}"),
         };
         Resp::Bulk(resp.to_string().into())
+    }
+
+    fn replconf() -> Resp {
+        // TODO
+        Resp::Simple("OK".into())
     }
 }
 
