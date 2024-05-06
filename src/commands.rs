@@ -99,10 +99,10 @@ impl Command {
         I: IntoIterator<Item = &'a Resp>,
     {
         let mut i = i.into_iter();
-        let id = i.next().context("Expected id")?.as_string()?;
+        let _id = i.next().context("Expected id")?.as_string()?;
         let _offset = i.next().context("Expected offset")?;
 
-        Ok(Resp::Simple(format!("FULLRESYNC <{id}> 0")))
+        Ok(Resp::Simple("FULLRESYNC <8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb> 0".into()))
     }
 }
 
