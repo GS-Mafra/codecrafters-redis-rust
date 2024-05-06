@@ -1,5 +1,5 @@
 use anyhow::{bail, Context};
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use std::io::Cursor;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
@@ -84,6 +84,14 @@ impl Handler {
             Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
         };
         self.stream.flush().await?;
+        Ok(())
+    }
+
+    pub async fn write_bytes(&mut self, bytes: Bytes) -> anyhow::Result<()> {
+        self.stream.write_u8(b'$').await?;
+        self.stream.write_all(bytes.len().to_string().as_bytes()).await?;
+        self.stream.write_all(b"\r\n").await?;
+        self.stream.write_all(bytes.as_ref()).await?;
         Ok(())
     }
 }

@@ -28,6 +28,7 @@ atoi = "2.0.0"
 once_cell = "1.19.0"
 clap = { version = "4.5.4", features = ["derive"] }
 rand = "0.8.5"
+hex = "0.4.3"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

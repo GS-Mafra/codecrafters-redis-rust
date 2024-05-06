@@ -1,12 +1,16 @@
 use anyhow::{bail, Context};
+use bytes::Bytes;
 use std::{fmt::Display, time::Duration};
 
 use crate::{Resp, Role, DB};
 
-pub struct Command;
+pub struct Command {
+    pub resp: Resp,
+    pub data: Option<Bytes>,
+}
 
 impl Command {
-    pub fn parse(value: &Resp, role: &Role) -> anyhow::Result<Resp> {
+    pub fn parse(value: &Resp, role: &Role) -> anyhow::Result<Self> {
         match value {
             Resp::Array(values) => {
                 let mut values = values.iter();
@@ -28,26 +32,37 @@ impl Command {
         }
     }
 
-    fn ping() -> Resp {
-        Resp::Simple("PONG".into())
+    const fn new(resp: Resp) -> Self {
+        Self { resp, data: None }
     }
 
-    fn echo<'a, I>(i: I) -> anyhow::Result<Resp>
+    fn with_data(mut self, data: Bytes) -> Self {
+        self.data = Some(data);
+        self
+    }
+
+    fn ping() -> Self {
+        Self::new(Resp::Simple("PONG".into()))
+    }
+
+    fn echo<'a, I>(i: I) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = &'a Resp>,
     {
-        Ok(i.into_iter().next().context("Missing ECHO value")?.clone())
+        Ok(Self::new(
+            i.into_iter().next().context("Missing ECHO value")?.clone(),
+        ))
     }
 
-    fn get<'a, I>(i: I) -> anyhow::Result<Resp>
+    fn get<'a, I>(i: I) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = &'a Resp>,
     {
         let key = i.into_iter().next().context("Missing Key")?.as_string()?;
-        Ok(DB.get(&key).map_or(Resp::Null, Resp::Bulk))
+        Ok(Self::new(DB.get(&key).map_or(Resp::Null, Resp::Bulk)))
     }
 
-    fn set<'a, I>(i: I) -> anyhow::Result<Resp>
+    fn set<'a, I>(i: I) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = &'a Resp>,
     {
@@ -64,10 +79,10 @@ impl Command {
                 })
         };
         DB.set(key, value.into(), px);
-        Ok(Resp::Simple("OK".into()))
+        Ok(Self::new(Resp::Simple("OK".into())))
     }
 
-    fn info<'a, I>(i: I, role: &Role) -> Resp
+    fn info<'a, I>(i: I, role: &Role) -> Self
     where
         I: IntoIterator<Item = &'a Resp>,
     {
@@ -76,7 +91,7 @@ impl Command {
             let resp = Info {
                 replication: Some(Replication::new(role)),
             };
-            return Resp::Bulk(resp.to_string().into());
+            return Self::new(Resp::Bulk(resp.to_string().into()));
         };
 
         let resp = match arg.to_ascii_lowercase().as_slice() {
@@ -86,15 +101,15 @@ impl Command {
 
             _ => todo!("{arg:?}"),
         };
-        Resp::Bulk(resp.to_string().into())
+        Self::new(Resp::Bulk(resp.to_string().into()))
     }
 
-    fn replconf() -> Resp {
+    fn replconf() -> Self {
         // TODO
-        Resp::Simple("OK".into())
+        Self::new(Resp::Simple("OK".into()))
     }
 
-    fn psync<'a, I>(i: I, role: &Role) -> anyhow::Result<Resp>
+    fn psync<'a, I>(i: I, role: &Role) -> anyhow::Result<Self>
     where
         I: IntoIterator<Item = &'a Resp>,
     {
@@ -109,10 +124,22 @@ impl Command {
         else {
             panic!("Expected master")
         };
-        Ok(Resp::Simple(format!(
-            "FULLRESYNC {master_replid} {master_repl_offset}"
-        )))
+
+        let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
+        Ok(Self::new(resp).with_data(get_data()?))
     }
+}
+
+fn get_data() -> anyhow::Result<Bytes> {
+    // TODO
+    const DATA: &str = "524544495330303131fa0972656469732d76657\
+    205372e322e30fa0a72656469732d62697473c040fa056374696d65\
+    c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d626\
+    17365c000fff06e3bfec0ff5aa2";
+
+    hex::decode(DATA)
+        .map(Bytes::from)
+        .map_err(anyhow::Error::from)
 }
 
 #[derive(Debug)]

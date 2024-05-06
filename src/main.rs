@@ -37,6 +37,9 @@ async fn handle_connection(stream: TcpStream) -> anyhow::Result<()> {
             return Ok(());
         };
         let response = Command::parse(&resp, &ARGUMENTS.role)?;
-        handler.write(&response).await?;
+        handler.write(&response.resp).await?;
+        if let Some(data) = response.data {
+            handler.write_bytes(data).await?;
+        }
     }
 }
