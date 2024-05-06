@@ -18,8 +18,12 @@ impl Arguments {
     #[must_use]
     // https://docs.rs/clap/latest/clap/_derive/index.html#using-derived-arguments-in-a-builder-application
     pub fn parser() -> Self {
-        let cli = Command::new(env!("CARGO_CRATE_NAME"))
-            .arg(arg!(--replicaof).action(ArgAction::Append).num_args(2));
+        let cli = Command::new(env!("CARGO_CRATE_NAME")).arg(
+            arg!(--replicaof)
+                .action(ArgAction::Append)
+                .num_args(2)
+                .value_names(["MASTER_HOST", "MASTER_PORT"]),
+        );
 
         let cli = Self::augment_args(cli);
         let mut matches = cli.get_matches();
