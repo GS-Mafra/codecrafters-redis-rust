@@ -102,7 +102,7 @@ impl Command {
         let _id = i.next().context("Expected id")?.as_string()?;
         let _offset = i.next().context("Expected offset")?;
 
-        Ok(Resp::Simple("FULLRESYNC <8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb> 0".into()))
+        Ok(Resp::Simple("FULLRESYNC 8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb 0".into()))
     }
 }
 
