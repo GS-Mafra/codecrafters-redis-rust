@@ -6,11 +6,15 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::{args::Role, Resp};
+use crate::{
+    args::{Role, Slave},
+    Resp,
+};
 
 pub struct Handler {
     stream: BufWriter<TcpStream>,
     buf: BytesMut,
+    pub offset: u64,
 }
 
 impl Handler {
@@ -18,6 +22,7 @@ impl Handler {
         Self {
             stream: BufWriter::new(stream),
             buf: BytesMut::with_capacity(1024 * 4),
+            offset: 0,
         }
     }
 
@@ -45,6 +50,7 @@ impl Handler {
                 cur.set_position(0);
                 let resp = Resp::parse(&mut cur).map(Option::Some);
                 self.buf.advance(len);
+                self.offset += u64::try_from(len)?;
                 resp
             }
             Err(crate::resp::Error::Incomplete) => Ok(None),
@@ -98,7 +104,7 @@ impl Handler {
 }
 
 pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
-    if let Role::Slave(addr) = role {
+    if let Role::Slave(Slave { addr, .. }) = role {
         let master = TcpStream::connect(addr)
             .await
             .with_context(|| format!("Failed to connect to master at {addr}"))?;

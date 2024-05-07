@@ -1,10 +1,10 @@
 use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
-use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::atomic::{AtomicU64, Ordering},
+};
 use tokio::sync::broadcast::{self, Sender};
-
-pub static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
 
 #[derive(Debug, Parser)]
 pub struct Arguments {
@@ -41,7 +41,8 @@ impl Arguments {
                     }
                 };
                 let port = x.next().unwrap().parse::<u16>().ok()?;
-                Some(Role::Slave(SocketAddrV4::new(host, port)))
+                let slave = Slave::new(SocketAddrV4::new(host, port));
+                Some(Role::Slave(slave))
             })
             .unwrap_or_default();
 
@@ -58,16 +59,25 @@ impl Arguments {
 #[derive(Debug)]
 pub enum Role {
     Master(Master),
-    Slave(SocketAddrV4),
+    Slave(Slave),
 }
 
 impl Role {
+    #[inline]
     #[must_use]
     pub const fn get_slaves(&self) -> Option<&Sender<crate::Resp>> {
         match self {
             Self::Master(master) => Some(&master.channel),
             Self::Slave(_) => None,
         }
+    }
+
+    #[inline]
+    pub fn increase_offset(&self, by: u64) {
+        match self {
+            Self::Master(master) => master.repl_offset.fetch_add(by, Ordering::Relaxed),
+            Self::Slave(slave) => slave.offset.fetch_add(by, Ordering::Relaxed),
+        };
     }
 }
 
@@ -80,7 +90,7 @@ impl Default for Role {
 #[derive(Debug)]
 pub struct Master {
     pub replid: String,
-    pub repl_offset: u64,
+    pub repl_offset: AtomicU64,
     channel: Sender<crate::Resp>,
 }
 
@@ -92,7 +102,7 @@ impl Default for Master {
                 .take(40)
                 .map(char::from)
                 .collect(),
-            repl_offset: 0,
+            repl_offset: 0.into(),
             channel: broadcast::channel(16).0,
         }
     }
@@ -107,7 +117,22 @@ impl Master {
 
     #[inline]
     #[must_use]
-    pub const fn repl_offset(&self) -> u64 {
-        self.repl_offset
+    pub const fn repl_offset(&self) -> &AtomicU64 {
+        &self.repl_offset
+    }
+}
+
+#[derive(Debug)]
+pub struct Slave {
+    pub addr: SocketAddrV4,
+    pub offset: AtomicU64,
+}
+
+impl Slave {
+    fn new(addr: SocketAddrV4) -> Self {
+        Self {
+            addr,
+            offset: 0.into(),
+        }
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::{bail, Context};
 use bytes::Bytes;
-use std::{fmt::Display, time::Duration};
+use std::{fmt::Display, sync::atomic::Ordering, time::Duration};
 
 use crate::{Resp, Role, DB};
 
@@ -9,6 +9,7 @@ pub struct Command {
     pub resp: Resp,
     pub data: Option<Resp>,
     pub slave_propagation: Option<Resp>,
+    pub silent: bool,
 }
 
 impl Command {
@@ -19,7 +20,7 @@ impl Command {
                 let Some(Resp::Bulk(command)) = values.next() else {
                     bail!("Expected bulk string");
                 };
-                Ok(match command.to_ascii_lowercase().as_slice() {
+                let mut resp = match command.to_ascii_lowercase().as_slice() {
                     b"ping" => Self::ping(),
                     b"echo" => Self::echo(values)?,
                     b"get" => Self::get(values)?,
@@ -29,7 +30,13 @@ impl Command {
                     b"replconf" => Self::replconf(values, role),
                     b"psync" => Self::psync(values, role)?,
                     _ => unimplemented!(),
-                })
+                };
+
+                // FIXME
+                if let Role::Master(_) = role {
+                    resp.silent = false;
+                }
+                Ok(resp)
             }
             _ => Err(anyhow::anyhow!("Unsupported RESP for command")),
         }
@@ -40,6 +47,7 @@ impl Command {
             resp,
             data: None,
             slave_propagation: None,
+            silent: true,
         }
     }
 
@@ -50,10 +58,15 @@ impl Command {
     }
 
     fn and_propagate(mut self, role: &Role, commands: &[Resp]) -> Self {
-        if let Role::Master { .. } = role {
+        if let Role::Master(_) = role {
             let resp = Resp::Array(commands.to_owned());
             self.slave_propagation = Some(resp);
         }
+        self
+    }
+
+    const fn silent(mut self, s: bool) -> Self {
+        self.silent = s;
         self
     }
 
@@ -136,7 +149,7 @@ impl Command {
         // TODO
         match role {
             Role::Master(_) => Self::new(Resp::simple("OK")),
-            Role::Slave(_) => {
+            Role::Slave(slave) => {
                 let conf = i.into_iter().next();
 
                 let Some(Resp::Bulk(conf)) = conf else {
@@ -148,9 +161,9 @@ impl Command {
                         let resp = Resp::Array(vec![
                             Resp::bulk("REPLCONF"),
                             Resp::bulk("ACK"),
-                            Resp::bulk("0"),
+                            Resp::bulk(slave.offset.load(Ordering::Relaxed).to_string()),
                         ]);
-                        Self::new(resp)
+                        Self::new(resp).silent(false)
                     }
                     _ => todo!(),
                 }
@@ -171,7 +184,7 @@ impl Command {
         };
 
         let master_replid = master.replid();
-        let master_repl_offset = master.repl_offset();
+        let master_repl_offset = master.repl_offset().load(Ordering::Relaxed);
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
         Ok(Self::new(resp).with_data(get_data()?))
@@ -216,7 +229,7 @@ impl<'a> Replication<'a> {
             Role::Master(master) => Self {
                 role,
                 master_replid: Some(master.replid()),
-                master_repl_offset: Some(master.repl_offset()),
+                master_repl_offset: Some(master.repl_offset().load(Ordering::Relaxed)),
             },
             Role::Slave(_) => Self {
                 role,
@@ -237,7 +250,7 @@ impl<'a> Display for Replication<'a> {
         write!(f, "# Replication\r\n")?;
 
         match role {
-            Role::Master { .. } => write!(f, "role:master")?,
+            Role::Master(_) => write!(f, "role:master")?,
             Role::Slave(_) => write!(f, "role:slave")?,
         }
         f.write_str("\r\n")?;

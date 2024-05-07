@@ -1,7 +1,7 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 pub mod args;
-pub use args::{Role, ARGUMENTS};
+pub use args::{Role, Arguments};
 
 pub mod commands;
 pub use commands::Command;

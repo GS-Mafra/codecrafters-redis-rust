@@ -1,30 +1,40 @@
-use once_cell::sync::Lazy;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::{
+    net::{Ipv4Addr, SocketAddrV4},
+    sync::Arc,
+};
 use tokio::{net::TcpListener, sync::broadcast::Sender};
 
-use redis_starter_rust::{connect_slave, debug_print, Command, Handler, Resp, Role, ARGUMENTS};
+use redis_starter_rust::{connect_slave, debug_print, Arguments, Command, Handler, Resp, Role};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    Lazy::force(&ARGUMENTS);
-    debug_print!("{:#?}", &*ARGUMENTS);
+    let arguments = {
+        let arguments = Arguments::parser();
+        debug_print!("{:#?}", arguments);
+        arguments
+    };
+    let Arguments { port, role } = arguments;
+    let role = Arc::new(role);
 
-    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port);
+    let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    if let Some(slave) = connect_slave(&ARGUMENTS.role, ARGUMENTS.port).await? {
-        tokio::spawn(async move { handle_connection(slave, &ARGUMENTS.role, None).await });
+    if let Some(mut slave) = connect_slave(&role, port).await? {
+        slave.offset = 0;
+        let role = role.clone();
+        tokio::spawn(async move { handle_connection(slave, &role, None).await });
     }
 
-    let master = ARGUMENTS.role.get_slaves();
+    let master = role.get_slaves();
 
     loop {
         let sender = master.cloned();
+        let role = role.clone();
 
         match listener.accept().await {
             Ok((stream, _)) => {
                 tokio::spawn(async move {
-                    handle_connection(Handler::new(stream), &ARGUMENTS.role, sender)
+                    handle_connection(Handler::new(stream), &role, sender)
                         .await
                         .inspect_err(|e| eprintln!("{e}"))
                 });
@@ -42,12 +52,15 @@ async fn handle_connection(
     sender: Option<Sender<Resp>>,
 ) -> anyhow::Result<()> {
     loop {
+        debug_print!("role: {role:#?}");
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };
         let response = Command::parse(&resp, role)?;
 
-        handler.write(&response.resp).await?;
+        if !response.silent {
+            handler.write(&response.resp).await?;
+        }
 
         if let Some(sender) = &sender {
             if let Some(data) = response.data {
@@ -62,5 +75,7 @@ async fn handle_connection(
                 let _ = sender.send(propagation);
             }
         }
+        role.increase_offset(handler.offset);
+        handler.offset = 0;
     }
 }

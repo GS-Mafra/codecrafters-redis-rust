@@ -101,7 +101,7 @@ impl Resp {
     pub fn bulk(b: impl Into<Bytes>) -> Self {
         Self::Bulk(b.into())
     }
-    
+
     #[inline]
     pub fn simple(s: impl Into<String>) -> Self {
         Self::Simple(s.into())
