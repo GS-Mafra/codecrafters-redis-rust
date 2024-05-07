@@ -142,8 +142,10 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     };
     handler.write(&resp).await?;
 
-    // TODO do something with the data in handler.buf
     let _ = handler.read().await?;
+
+    // TODO do something with the data in handler.buf
+    handler.buf.clear();
 
     Ok(handler)
 }
