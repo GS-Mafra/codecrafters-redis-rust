@@ -79,20 +79,20 @@ impl Default for Role {
 
 #[derive(Debug)]
 pub struct Master {
-    pub master_replid: String,
-    pub master_repl_offset: u64,
+    pub replid: String,
+    pub repl_offset: u64,
     channel: Sender<crate::Resp>,
 }
 
 impl Default for Master {
     fn default() -> Self {
         Self {
-            master_replid: rand::thread_rng()
+            replid: rand::thread_rng()
                 .sample_iter(Alphanumeric)
                 .take(40)
                 .map(char::from)
                 .collect(),
-            master_repl_offset: 0,
+            repl_offset: 0,
             channel: broadcast::channel(16).0,
         }
     }
@@ -102,12 +102,12 @@ impl Master {
     #[inline]
     #[must_use]
     pub fn replid(&self) -> &str {
-        &self.master_replid
+        &self.replid
     }
 
     #[inline]
     #[must_use]
     pub const fn repl_offset(&self) -> u64 {
-        self.master_repl_offset
+        self.repl_offset
     }
 }
