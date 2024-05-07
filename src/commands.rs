@@ -7,14 +7,15 @@ use crate::{Resp, Role, DB};
 #[derive(Debug)]
 pub struct Command {
     pub resp: Resp,
-    pub data: Option<Bytes>,
+    pub data: Option<Resp>,
+    pub slave_propagation: Option<Resp>,
 }
 
 impl Command {
     pub fn parse(value: &Resp, role: &Role) -> anyhow::Result<Self> {
         match value {
-            Resp::Array(values) => {
-                let mut values = values.iter();
+            Resp::Array(elems) => {
+                let mut values = elems.iter();
                 let Some(Resp::Bulk(command)) = values.next() else {
                     bail!("Expected bulk string");
                 };
@@ -22,7 +23,8 @@ impl Command {
                     b"ping" => Self::ping(),
                     b"echo" => Self::echo(values)?,
                     b"get" => Self::get(values)?,
-                    b"set" => Self::set(values)?,
+                    b"set" => Self::set(values)?.and_propagate(role, elems),
+                    b"del" => Self::del(values).and_propagate(role, elems),
                     b"info" => Self::info(values, role),
                     b"replconf" => Self::replconf(),
                     b"psync" => Self::psync(values, role)?,
@@ -34,11 +36,23 @@ impl Command {
     }
 
     const fn new(resp: Resp) -> Self {
-        Self { resp, data: None }
+        Self {
+            resp,
+            data: None,
+            slave_propagation: None,
+        }
     }
 
-    fn with_data(mut self, data: Bytes) -> Self {
+    fn with_data(mut self, data: Resp) -> Self {
         self.data = Some(data);
+        self
+    }
+
+    fn and_propagate(mut self, role: &Role, commands: &[Resp]) -> Self {
+        if let Role::Master { .. } = role {
+            let resp = Resp::Array(commands.to_owned());
+            self.slave_propagation = Some(resp);
+        }
         self
     }
 
@@ -83,6 +97,16 @@ impl Command {
         Ok(Self::new(Resp::Simple("OK".into())))
     }
 
+    fn del<'a, I>(i: I) -> Self
+    where
+        I: IntoIterator<Item = &'a Resp>,
+    {
+        let mut keys = i.into_iter();
+        let deleted = DB.multi_del(keys.by_ref().flat_map(Resp::as_string));
+        let resp = Resp::Integer(i64::try_from(deleted).expect("Deleted to be in range of i64"));
+        Self::new(resp)
+    }
+
     fn info<'a, I>(i: I, role: &Role) -> Self
     where
         I: IntoIterator<Item = &'a Resp>,
@@ -118,20 +142,19 @@ impl Command {
         let _id = i.next().context("Expected id")?;
         let _offset = i.next().context("Expected offset")?;
 
-        let Role::Master {
-            master_replid,
-            master_repl_offset,
-        } = role
-        else {
+        let Role::Master(master) = role else {
             panic!("Expected master")
         };
+
+        let master_replid = master.replid();
+        let master_repl_offset = master.repl_offset();
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
         Ok(Self::new(resp).with_data(get_data()?))
     }
 }
 
-fn get_data() -> anyhow::Result<Bytes> {
+fn get_data() -> anyhow::Result<Resp> {
     // TODO
     const DATA: &str = "524544495330303131fa0972656469732d76657\
     205372e322e30fa0a72656469732d62697473c040fa056374696d65\
@@ -139,8 +162,9 @@ fn get_data() -> anyhow::Result<Bytes> {
     17365c000fff06e3bfec0ff5aa2";
 
     hex::decode(DATA)
-        .map(Bytes::from)
         .map_err(anyhow::Error::from)
+        .map(Bytes::from)
+        .map(Resp::Data)
 }
 
 #[derive(Debug)]
@@ -165,13 +189,10 @@ struct Replication<'a> {
 impl<'a> Replication<'a> {
     fn new(role: &'a Role) -> Self {
         match role {
-            Role::Master {
-                master_replid,
-                master_repl_offset,
-            } => Self {
+            Role::Master(master) => Self {
                 role,
-                master_replid: Some(master_replid),
-                master_repl_offset: Some(*master_repl_offset),
+                master_replid: Some(master.replid()),
+                master_repl_offset: Some(master.repl_offset()),
             },
             Role::Slave(_) => Self {
                 role,

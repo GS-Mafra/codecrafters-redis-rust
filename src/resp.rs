@@ -19,6 +19,8 @@ pub enum Resp {
     Simple(String),
     Bulk(Bytes),
     Array(Vec<Self>),
+    Integer(i64),
+    Data(Bytes),
     // NullBulk
     Null,
 }
@@ -51,6 +53,7 @@ impl Resp {
                 advance(cur, len + b"\r\n".len())?;
                 Self::Bulk(data)
             }
+            b':' => Self::Integer(slice_to_int::<i64>(read_line(cur)?)?),
             c => unimplemented!("{:?}", c as char),
         };
         debug_print!("Parsed {resp:?}");
@@ -59,6 +62,8 @@ impl Resp {
     }
 
     pub fn check(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
+        debug_print!("Checking: {:?}", std::str::from_utf8(cur.chunk()));
+
         match get_u8(cur)? {
             b'*' => {
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
@@ -67,7 +72,7 @@ impl Resp {
                     Self::check(cur)?;
                 }
             }
-            b'+' => {
+            b'+' | b':' => {
                 read_line(cur)?;
             }
             b'$' => 'bulk: {

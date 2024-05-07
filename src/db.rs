@@ -64,6 +64,11 @@ impl Db {
     pub fn del(&self, k: &str) {
         self.inner.write().unwrap().remove(k);
     }
+
+    pub fn multi_del(&self, k: impl Iterator<Item = impl AsRef<str>>) -> usize {
+        let mut lock = self.inner.write().unwrap();
+        k.filter_map(|x| lock.remove(x.as_ref())).count()
+    }
 }
 
 #[cfg(test)]
@@ -84,5 +89,21 @@ mod tests {
         assert!(db.get(&k).is_some());
         sleep(Duration::from_millis(2_000));
         assert!(db.get(&k).is_none());
+    }
+
+    #[test]
+    fn del() {
+        let db = Db::new();
+
+        let keys = ["key1", "key2", "key3"].map(String::from);
+
+        keys.clone()
+            .into_iter()
+            .for_each(|k| db.set(k, "test".into(), None));
+
+        assert_eq!(db.inner.read().unwrap().len(), 3);
+        db.del(&keys[0]);
+        assert_eq!(db.inner.read().unwrap().len(), 2);
+        assert_eq!(db.multi_del(keys[1..=2].iter()), 2);
     }
 }

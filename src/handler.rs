@@ -6,7 +6,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::{args::Role, debug_print, Resp};
+use crate::{args::Role, Resp};
 
 pub struct Handler {
     stream: BufWriter<TcpStream>,
@@ -47,10 +47,7 @@ impl Handler {
                 self.buf.advance(len);
                 resp
             }
-            Err(crate::resp::Error::Incomplete) => {
-                debug_print!("Resp was incomplete");
-                Ok(None)
-            }
+            Err(crate::resp::Error::Incomplete) => Ok(None),
             Err(e) => Err(e.into()),
         }
     }
@@ -62,15 +59,7 @@ impl Handler {
                 self.stream.write_all(inner.as_bytes()).await?;
                 self.stream.write_all(b"\r\n").await?;
             }
-            Resp::Bulk(inner) => {
-                self.stream.write_u8(b'$').await?;
-                self.stream
-                    .write_all(inner.len().to_string().as_bytes())
-                    .await?;
-                self.stream.write_all(b"\r\n").await?;
-                self.stream.write_all(inner).await?;
-                self.stream.write_all(b"\r\n").await?;
-            }
+            Resp::Bulk(inner) => self.write_bulk(inner, true).await?,
             Resp::Array(elems) => {
                 self.stream.write_u8(b'*').await?;
                 self.stream
@@ -81,18 +70,29 @@ impl Handler {
                     Box::pin(self.write(resp)).await?;
                 }
             }
+            Resp::Integer(inner) => {
+                self.stream.write_u8(b':').await?;
+                self.stream.write_all(inner.to_string().as_bytes()).await?;
+                self.stream.write_all(b"\r\n").await?;
+            }
+            Resp::Data(inner) => self.write_bulk(inner, false).await?,
+
             Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
         };
         self.stream.flush().await?;
         Ok(())
     }
 
-    pub async fn write_bytes(&mut self, bytes: Bytes) -> anyhow::Result<()> {
+    async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> anyhow::Result<()> {
         self.stream.write_u8(b'$').await?;
-        self.stream.write_all(bytes.len().to_string().as_bytes()).await?;
+        self.stream
+            .write_all(bulk.len().to_string().as_bytes())
+            .await?;
         self.stream.write_all(b"\r\n").await?;
-        self.stream.write_all(bytes.as_ref()).await?;
-        self.stream.flush().await?;
+        self.stream.write_all(bulk).await?;
+        if crlf {
+            self.stream.write_all(b"\r\n").await?;
+        }
         Ok(())
     }
 }
@@ -141,6 +141,9 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         Resp::Array(vec![psync, id, offset])
     };
     handler.write(&resp).await?;
+
+    // TODO do something with the data in handler.buf
+    let _ = handler.read().await?;
 
     Ok(handler)
 }

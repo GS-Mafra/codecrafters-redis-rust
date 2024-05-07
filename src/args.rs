@@ -2,6 +2,7 @@ use clap::{arg, ArgAction, Args, Command, FromArgMatches, Parser};
 use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
 use std::net::{Ipv4Addr, SocketAddrV4};
+use tokio::sync::broadcast::{self, Sender};
 
 pub static ARGUMENTS: Lazy<Arguments> = Lazy::new(Arguments::parser);
 
@@ -54,24 +55,59 @@ impl Arguments {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Role {
-    Master {
-        master_replid: String,
-        master_repl_offset: u64,
-    },
+    Master(Master),
     Slave(SocketAddrV4),
+}
+
+impl Role {
+    #[must_use]
+    pub const fn get_slaves(&self) -> Option<&Sender<crate::Resp>> {
+        match self {
+            Self::Master(master) => Some(&master.channel),
+            Self::Slave(_) => None,
+        }
+    }
 }
 
 impl Default for Role {
     fn default() -> Self {
-        Self::Master {
+        Self::Master(Master::default())
+    }
+}
+
+#[derive(Debug)]
+pub struct Master {
+    pub master_replid: String,
+    pub master_repl_offset: u64,
+    channel: Sender<crate::Resp>,
+}
+
+impl Default for Master {
+    fn default() -> Self {
+        Self {
             master_replid: rand::thread_rng()
                 .sample_iter(Alphanumeric)
                 .take(40)
                 .map(char::from)
                 .collect(),
             master_repl_offset: 0,
+            channel: broadcast::channel(16).0,
         }
+    }
+}
+
+impl Master {
+    #[inline]
+    #[must_use]
+    pub fn replid(&self) -> &str {
+        &self.master_replid
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn repl_offset(&self) -> u64 {
+        self.master_repl_offset
     }
 }
