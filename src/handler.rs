@@ -112,32 +112,32 @@ pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Hand
 async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     let mut handler = Handler::new(stream);
 
-    let resp = Resp::Array(vec![Resp::Bulk("PING".into())]);
+    let resp = Resp::Array(vec![Resp::bulk("PING")]);
     handler.write(&resp).await?;
     check_handshake(&mut handler, "PONG").await?;
 
     let resp = {
-        let replconf = Resp::Bulk("REPLCONF".into());
-        let listening_port = Resp::Bulk("listening-port".into());
-        let port = Resp::Bulk(port.to_string().into());
+        let replconf = Resp::bulk("REPLCONF");
+        let listening_port = Resp::bulk("listening-port");
+        let port = Resp::bulk(port.to_string());
         Resp::Array(vec![replconf, listening_port, port])
     };
     handler.write(&resp).await?;
     check_handshake(&mut handler, "OK").await?;
 
     let resp = {
-        let replconf = Resp::Bulk("REPLCONF".into());
-        let capa = Resp::Bulk("capa".into());
-        let the_capas = Resp::Bulk("psync2".into());
+        let replconf = Resp::bulk("REPLCONF");
+        let capa = Resp::bulk("capa");
+        let the_capas = Resp::bulk("psync2");
         Resp::Array(vec![replconf, capa, the_capas])
     };
     handler.write(&resp).await?;
     check_handshake(&mut handler, "OK").await?;
 
     let resp = {
-        let psync = Resp::Bulk("PSYNC".into());
-        let id = Resp::Bulk("?".into());
-        let offset = Resp::Bulk("-1".into());
+        let psync = Resp::bulk("PSYNC");
+        let id = Resp::bulk("?");
+        let offset = Resp::bulk("-1");
         Resp::Array(vec![psync, id, offset])
     };
     handler.write(&resp).await?;
@@ -152,7 +152,7 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
 
 async fn check_handshake(handler: &mut Handler, msg: &str) -> anyhow::Result<()> {
     let recv = handler.read().await?;
-    if !recv.is_some_and(|x| Resp::Simple(msg.into()) == x) {
+    if !recv.is_some_and(|x| Resp::simple(msg) == x) {
         bail!("Expected {msg}")
     }
     Ok(())

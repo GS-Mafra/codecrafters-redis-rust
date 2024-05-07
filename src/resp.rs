@@ -96,6 +96,16 @@ impl Resp {
             _ => Err(anyhow::anyhow!("Not valid RESP for a string")),
         }
     }
+
+    #[inline]
+    pub fn bulk(b: impl Into<Bytes>) -> Self {
+        Self::Bulk(b.into())
+    }
+    
+    #[inline]
+    pub fn simple(s: impl Into<String>) -> Self {
+        Self::Simple(s.into())
+    }
 }
 
 fn get_u8(cur: &mut Cursor<&[u8]>) -> Result<u8, Error> {
@@ -145,12 +155,12 @@ mod tests {
         let resp = |cur: &mut Cursor<&[u8]>| Resp::parse(cur).unwrap();
 
         {
-            let expected = Resp::Array(vec![Resp::Bulk("echo".into()), Resp::Bulk("hey".into())]);
+            let expected = Resp::Array(vec![Resp::bulk("echo"), Resp::bulk("hey")]);
             pretty_assertions::assert_eq!(resp(&mut cur), expected);
         }
         assert!(cur.remaining() == ping.len());
         {
-            let expected = Resp::Array(vec![Resp::Bulk("ping".into())]);
+            let expected = Resp::Array(vec![Resp::bulk("ping")]);
             pretty_assertions::assert_eq!(resp(&mut cur), expected);
         }
 

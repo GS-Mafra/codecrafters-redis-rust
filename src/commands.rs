@@ -26,7 +26,7 @@ impl Command {
                     b"set" => Self::set(values)?.and_propagate(role, elems),
                     b"del" => Self::del(values).and_propagate(role, elems),
                     b"info" => Self::info(values, role),
-                    b"replconf" => Self::replconf(),
+                    b"replconf" => Self::replconf(values, role),
                     b"psync" => Self::psync(values, role)?,
                     _ => unimplemented!(),
                 })
@@ -43,6 +43,7 @@ impl Command {
         }
     }
 
+    #[inline]
     fn with_data(mut self, data: Resp) -> Self {
         self.data = Some(data);
         self
@@ -57,7 +58,7 @@ impl Command {
     }
 
     fn ping() -> Self {
-        Self::new(Resp::Simple("PONG".into()))
+        Self::new(Resp::simple("PONG"))
     }
 
     fn echo<'a, I>(i: I) -> anyhow::Result<Self>
@@ -85,16 +86,15 @@ impl Command {
         let key = i.next().context("Missing Key")?.as_string()?;
         let value = i.next().context("Missing Value")?.as_string()?;
         let px = {
-            i.position(|x| *x == Resp::Bulk(b"px".as_ref().into()))
-                .and_then(|pos| {
-                    i.nth(pos)
-                        .and_then(|x| Resp::as_string(x).ok())
-                        .and_then(|x| x.parse::<u64>().ok())
-                        .map(Duration::from_millis)
-                })
+            i.position(|x| *x == Resp::bulk("px")).and_then(|pos| {
+                i.nth(pos)
+                    .and_then(|x| Resp::as_string(x).ok())
+                    .and_then(|x| x.parse::<u64>().ok())
+                    .map(Duration::from_millis)
+            })
         };
         DB.set(key, value.into(), px);
-        Ok(Self::new(Resp::Simple("OK".into())))
+        Ok(Self::new(Resp::simple("OK")))
     }
 
     fn del<'a, I>(i: I) -> Self
@@ -116,7 +116,7 @@ impl Command {
             let resp = Info {
                 replication: Some(Replication::new(role)),
             };
-            return Self::new(Resp::Bulk(resp.to_string().into()));
+            return Self::new(Resp::bulk(resp.to_string()));
         };
 
         let resp = match arg.to_ascii_lowercase().as_slice() {
@@ -126,12 +126,36 @@ impl Command {
 
             _ => todo!("{arg:?}"),
         };
-        Self::new(Resp::Bulk(resp.to_string().into()))
+        Self::new(Resp::bulk(resp.to_string()))
     }
 
-    fn replconf() -> Self {
+    fn replconf<'a, I>(i: I, role: &Role) -> Self
+    where
+        I: IntoIterator<Item = &'a Resp>,
+    {
         // TODO
-        Self::new(Resp::Simple("OK".into()))
+        match role {
+            Role::Master(_) => Self::new(Resp::simple("OK")),
+            Role::Slave(_) => {
+                let conf = i.into_iter().next();
+
+                let Some(Resp::Bulk(conf)) = conf else {
+                    panic!()
+                };
+
+                match conf.to_ascii_lowercase().as_slice() {
+                    b"getack" => {
+                        let resp = Resp::Array(vec![
+                            Resp::bulk("REPLCONF"),
+                            Resp::bulk("ACK"),
+                            Resp::bulk("0"),
+                        ]);
+                        Self::new(resp)
+                    }
+                    _ => todo!(),
+                }
+            }
+        }
     }
 
     fn psync<'a, I>(i: I, role: &Role) -> anyhow::Result<Self>
