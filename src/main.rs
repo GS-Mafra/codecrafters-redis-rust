@@ -3,12 +3,12 @@ use std::{
     net::{Ipv4Addr, SocketAddrV4},
     sync::Arc,
 };
-use tokio::{net::TcpListener, sync::broadcast::Sender};
+use tokio::net::TcpListener;
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-use redis_starter_rust::{connect_slave, Arguments, Command, Handler, Resp, Role};
+use redis_starter_rust::{args::Slave, connect_slave, handler::handle_connection, Arguments, Handler, Role};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,14 +18,13 @@ async fn main() -> anyhow::Result<()> {
     tracing::debug!("{:#?}", arguments);
     let Arguments { port, role } = arguments;
 
-    let role = Arc::new(role);
-
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    if let Some(slave) = connect_slave(&role, port).await? {
+    let role = Arc::new(role);
+    if let Role::Slave(Slave {addr, ..}) = *role {
         let role = role.clone();
-        tokio::spawn(async move { handle_connection(slave, &role, None).await });
+        tokio::spawn(async move { connect_slave(addr, &role, port).await});
     }
 
     let master = role.get_slaves();
@@ -46,24 +45,6 @@ async fn main() -> anyhow::Result<()> {
                 tracing::error!("error: {e}");
             }
         }
-    }
-}
-
-async fn handle_connection(
-    mut handler: Handler,
-    role: &Role,
-    sender: Option<Sender<Resp>>,
-) -> anyhow::Result<()> {
-    loop {
-        let Some(resp) = handler.read().await? else {
-            return Ok(());
-        };
-
-        Command::new(&mut handler, role, sender.as_ref())
-            .parse(&resp)
-            .await?;
-        role.increase_offset(handler.offset);
-        handler.offset = 0;
     }
 }
 

@@ -1,15 +1,13 @@
 use anyhow::{bail, Context};
 use bytes::{Buf, Bytes, BytesMut};
-use std::io::Cursor;
+use std::{io::Cursor, net::SocketAddrV4};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufWriter},
     net::TcpStream,
+    sync::broadcast::Sender,
 };
 
-use crate::{
-    args::{Role, Slave},
-    Resp,
-};
+use crate::{args::Role, Command, Resp};
 
 pub struct Handler {
     stream: BufWriter<TcpStream>,
@@ -64,12 +62,10 @@ impl Handler {
     }
 
     pub async fn write_checked(&mut self, resp: &Resp, role: &Role) -> anyhow::Result<()> {
-        self.write(resp).await
-        // FIXME
-        // match role {
-        //     Role::Master(_) => self.write(resp).await,
-        //     Role::Slave(_) => Ok(())
-        // }
+        match role {
+            Role::Master(_) => self.write(resp).await,
+            Role::Slave(_) => Ok(()),
+        }
     }
 
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
@@ -118,17 +114,32 @@ impl Handler {
     }
 }
 
-pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
-    if let Role::Slave(Slave { addr, .. }) = role {
-        tracing::info!("Connecting slave to master at {addr}");
-        let master = TcpStream::connect(addr)
-            .await
-            .with_context(|| format!("Failed to connect to master at {addr}"))?;
-        let handler = handshake(master, port).await?;
-        Ok(Some(handler))
-    } else {
-        Ok(None)
+pub async fn handle_connection(
+    mut handler: Handler,
+    role: &Role,
+    sender: Option<Sender<Resp>>,
+) -> anyhow::Result<()> {
+    loop {
+        let Some(resp) = handler.read().await? else {
+            return Ok(());
+        };
+
+        Command::new(&mut handler, role, sender.as_ref())
+            .parse(&resp)
+            .await?;
+        role.increase_offset(handler.offset);
+        handler.offset = 0;
     }
+}
+
+pub async fn connect_slave(addr: SocketAddrV4, role: &Role, port: u16) -> anyhow::Result<()> {
+    tracing::info!("Connecting slave to master at {addr}");
+    let master = TcpStream::connect(addr)
+        .await
+        .with_context(|| format!("Failed to connect to master at {addr}"))?;
+    let handler = handshake(master, port).await?;
+    handle_connection(handler, role, None).await?;
+    Ok(())
 }
 
 async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
