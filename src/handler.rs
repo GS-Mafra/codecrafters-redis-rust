@@ -39,6 +39,7 @@ impl Handler {
             if 0 == self.reader.read_buf(&mut self.buf).await? {
                 return Ok(None);
             }
+            println!("{:?}", self.buf);
         }
     }
 
