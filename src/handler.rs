@@ -188,18 +188,19 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     let recv = handler.read().await?;
     tracing::info!("Received: {recv:?}");
 
-    // TODO do something with the data in handler.buf
-    // FIXME
-    println!("received: {recv:?}");
-    println!("in buf: {:?}", handler.buf);
     if handler.buf.is_empty() {
         handler.read_bytes().await?;
-        println!("in buf after bytes: {:?}", handler.buf);
     }
-    handler.buf.clear();
+    
+    // TODO do something with the rdb
+    let _rdb = {
+        let mut cur = Cursor::new(handler.buf.as_ref());
+        let rdb = Resp::parse_rdb(&mut cur)?;
+        handler.buf.advance(cur.position().try_into()?);
+        rdb
+    };
 
     handler.offset = 0;
-
     Ok(handler)
 }
 

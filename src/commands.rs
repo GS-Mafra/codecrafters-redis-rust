@@ -74,7 +74,7 @@ impl<'a> Command<'a> {
     async fn get(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
         let key = i.next().context("Missing Key")?.as_string()?;
         let value = DB.get(&key).map_or(Resp::Null, Resp::Bulk);
-        self.handler.write_checked(&value, self.role).await
+        self.handler.write(&value).await
     }
 
     async fn set(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
@@ -120,7 +120,7 @@ impl<'a> Command<'a> {
             _ => todo!("{arg:?}"),
         };
         self.handler
-            .write_checked(&Resp::bulk(resp.to_string()), self.role)
+            .write(&Resp::bulk(resp.to_string()))
             .await
     }
 
@@ -152,14 +152,19 @@ impl<'a> Command<'a> {
 
     async fn psync(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
         let _id = i.next().context("Expected id")?;
-        let _offset = i.next().context("Expected offset")?;
+        let offset = i.next().context("Expected offset")?;
 
         let Role::Master(master) = self.role else {
             panic!("Expected master")
         };
 
         let master_replid = master.replid();
-        let master_repl_offset = master.repl_offset();
+        // FIXME ?
+        let master_repl_offset = if *offset == Resp::bulk("-1") {
+            0
+        } else {
+            master.repl_offset()
+        };
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
         self.handler.write(&resp).await?;

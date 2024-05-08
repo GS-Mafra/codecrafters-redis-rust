@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use atoi::FromRadix10SignedChecked;
 use bytes::{Buf, Bytes};
 use std::io::Cursor;
@@ -24,10 +24,20 @@ pub enum Resp {
 }
 
 impl Resp {
+    pub fn parse_rdb(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Bytes> {
+        if get_u8(cur)? != b'$' {
+            bail!("Not a rdb");
+        }
+        let len = slice_to_int::<usize>(read_line(cur)?)?;
+        let data = Bytes::copy_from_slice(&cur.chunk()[..len]);
+        advance(cur, len)?;
+        Ok(data)
+    }
+
     pub fn parse(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
         tracing::trace!("Parsing: {:?}", Bytes::from(cur.chunk().to_owned()));
 
-        let resp = match cur.get_u8() {
+        let resp = match get_u8(cur)? {
             b'*' => {
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
                 let mut elems = Vec::with_capacity(len);
