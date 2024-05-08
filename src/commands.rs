@@ -197,6 +197,16 @@ struct Info<'a> {
     // TODO
 }
 
+impl<'a> Display for Info<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self { replication } = self;
+        if let Some(replication) = replication {
+            write!(f, "{replication}\r\n")?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 struct Replication<'a> {
     role: &'a Role,
@@ -247,16 +257,6 @@ impl<'a> Display for Replication<'a> {
         }
         if let Some(master_repl_offset) = master_repl_offset {
             write!(f, "master_repl_offset:{master_repl_offset}\r\n")?;
-        }
-        Ok(())
-    }
-}
-
-impl<'a> Display for Info<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let Self { replication } = self;
-        if let Some(replication) = replication {
-            write!(f, "{replication}\r\n")?;
         }
         Ok(())
     }
