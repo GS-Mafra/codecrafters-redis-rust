@@ -28,7 +28,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let master = role.get_slaves();
-
     loop {
         let sender = master.cloned();
         let role = role.clone();
@@ -36,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         match listener.accept().await {
             Ok((stream, _)) => {
                 tokio::spawn(async move {
-                    handle_connection(Handler::new(stream), &role, sender)
+                    handle_connection(Handler::new(stream.into_split()), &role, sender)
                         .await
                         .inspect_err(|e| tracing::error!("{e}"))
                 });

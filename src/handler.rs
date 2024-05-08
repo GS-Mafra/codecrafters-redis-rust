@@ -2,23 +2,29 @@ use anyhow::{bail, Context};
 use bytes::{Buf, Bytes, BytesMut};
 use std::{io::Cursor, net::SocketAddrV4};
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, BufWriter},
-    net::TcpStream,
+    io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
     sync::broadcast::Sender,
 };
 
 use crate::{args::Role, Command, Resp};
 
 pub struct Handler {
-    stream: BufWriter<TcpStream>,
+    reader: BufReader<OwnedReadHalf>,
+    writer: BufWriter<OwnedWriteHalf>,
     buf: BytesMut,
-    pub offset: u64,
+    offset: u64,
 }
 
 impl Handler {
-    pub fn new(stream: TcpStream) -> Self {
+    #[must_use]
+    pub fn new((reader, writer): (OwnedReadHalf, OwnedWriteHalf)) -> Self {
         Self {
-            stream: BufWriter::new(stream),
+            reader: BufReader::new(reader),
+            writer: BufWriter::new(writer),
             buf: BytesMut::with_capacity(1024 * 4),
             offset: 0,
         }
@@ -30,14 +36,14 @@ impl Handler {
                 return Ok(Some(resp));
             }
 
-            if 0 == self.stream.read_buf(&mut self.buf).await? {
+            if 0 == self.reader.read_buf(&mut self.buf).await? {
                 return Ok(None);
             }
         }
     }
 
     async fn read_bytes(&mut self) -> anyhow::Result<()> {
-        self.stream.read_buf(&mut self.buf).await?;
+        self.reader.read_buf(&mut self.buf).await?;
         Ok(())
     }
 
@@ -72,43 +78,43 @@ impl Handler {
         tracing::debug!("Writing: {resp:?}");
         match resp {
             Resp::Simple(inner) => {
-                self.stream.write_u8(b'+').await?;
-                self.stream.write_all(inner.as_bytes()).await?;
-                self.stream.write_all(b"\r\n").await?;
+                self.writer.write_u8(b'+').await?;
+                self.writer.write_all(inner.as_bytes()).await?;
+                self.writer.write_all(b"\r\n").await?;
             }
             Resp::Bulk(inner) => self.write_bulk(inner, true).await?,
             Resp::Array(elems) => {
-                self.stream.write_u8(b'*').await?;
-                self.stream
+                self.writer.write_u8(b'*').await?;
+                self.writer
                     .write_all(elems.len().to_string().as_bytes())
                     .await?;
-                self.stream.write_all(b"\r\n").await?;
+                self.writer.write_all(b"\r\n").await?;
                 for resp in elems {
                     Box::pin(self.write(resp)).await?;
                 }
             }
             Resp::Integer(inner) => {
-                self.stream.write_u8(b':').await?;
-                self.stream.write_all(inner.to_string().as_bytes()).await?;
-                self.stream.write_all(b"\r\n").await?;
+                self.writer.write_u8(b':').await?;
+                self.writer.write_all(inner.to_string().as_bytes()).await?;
+                self.writer.write_all(b"\r\n").await?;
             }
             Resp::Data(inner) => self.write_bulk(inner, false).await?,
 
-            Resp::Null => self.stream.write_all(b"$-1\r\n").await?,
+            Resp::Null => self.writer.write_all(b"$-1\r\n").await?,
         };
-        self.stream.flush().await?;
+        self.writer.flush().await?;
         Ok(())
     }
 
     async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> anyhow::Result<()> {
-        self.stream.write_u8(b'$').await?;
-        self.stream
+        self.writer.write_u8(b'$').await?;
+        self.writer
             .write_all(bulk.len().to_string().as_bytes())
             .await?;
-        self.stream.write_all(b"\r\n").await?;
-        self.stream.write_all(bulk).await?;
+        self.writer.write_all(b"\r\n").await?;
+        self.writer.write_all(bulk).await?;
         if crlf {
-            self.stream.write_all(b"\r\n").await?;
+            self.writer.write_all(b"\r\n").await?;
         }
         Ok(())
     }
@@ -123,10 +129,10 @@ pub async fn handle_connection(
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };
-
         Command::new(&mut handler, role, sender.as_ref())
             .parse(&resp)
             .await?;
+
         role.increase_offset(handler.offset);
         handler.offset = 0;
     }
@@ -143,7 +149,7 @@ pub async fn connect_slave(addr: SocketAddrV4, role: &Role, port: u16) -> anyhow
 }
 
 async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
-    let mut handler = Handler::new(stream);
+    let mut handler = Handler::new(stream.into_split());
     tracing::info!("Starting handshake");
 
     let resp = Resp::Array(vec![Resp::bulk("PING")]);
