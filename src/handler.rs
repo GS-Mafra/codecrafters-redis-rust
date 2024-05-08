@@ -188,9 +188,12 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     handler.write(&resp).await?;
     let recv = handler.read().await?;
     tracing::info!("Received: {recv:?}");
+    println!("received: {recv:?}");
 
     // TODO do something with the data in handler.buf
+    println!("in buf: {:?}", handler.buf);
     handler.read_bytes().await?;
+    println!("in buf after bytes: {:?}", handler.buf);
     handler.buf.clear();
 
     handler.offset = 0;
