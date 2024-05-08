@@ -38,6 +38,11 @@ impl Handler {
         }
     }
 
+    async fn read_bytes(&mut self) -> anyhow::Result<()> {
+        self.stream.read_buf(&mut self.buf).await?;
+        Ok(())
+    }
+
     fn parse(&mut self) -> anyhow::Result<Option<Resp>> {
         if self.buf.is_empty() {
             return Ok(None);
@@ -151,7 +156,10 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     let _ = handler.read().await?;
 
     // TODO do something with the data in handler.buf
+    handler.read_bytes().await?;
     handler.buf.clear();
+
+    handler.offset = 0;
 
     Ok(handler)
 }

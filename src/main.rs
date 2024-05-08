@@ -19,8 +19,7 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
     let listener = TcpListener::bind(addr).await.unwrap();
 
-    if let Some(mut slave) = connect_slave(&role, port).await? {
-        slave.offset = 0;
+    if let Some(slave) = connect_slave(&role, port).await? {
         let role = role.clone();
         tokio::spawn(async move { handle_connection(slave, &role, None).await });
     }
@@ -52,7 +51,6 @@ async fn handle_connection(
     sender: Option<Sender<Resp>>,
 ) -> anyhow::Result<()> {
     loop {
-        debug_print!("role: {role:#?}");
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };

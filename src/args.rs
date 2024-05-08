@@ -89,8 +89,8 @@ impl Default for Role {
 
 #[derive(Debug)]
 pub struct Master {
-    pub replid: String,
-    pub repl_offset: AtomicU64,
+    replid: String,
+    repl_offset: AtomicU64,
     channel: Sender<crate::Resp>,
 }
 
@@ -117,15 +117,15 @@ impl Master {
 
     #[inline]
     #[must_use]
-    pub const fn repl_offset(&self) -> &AtomicU64 {
-        &self.repl_offset
+    pub fn repl_offset(&self) -> u64 {
+        self.repl_offset.load(Ordering::Relaxed)
     }
 }
 
 #[derive(Debug)]
 pub struct Slave {
     pub addr: SocketAddrV4,
-    pub offset: AtomicU64,
+    offset: AtomicU64,
 }
 
 impl Slave {
@@ -134,5 +134,10 @@ impl Slave {
             addr,
             offset: 0.into(),
         }
+    }
+
+    #[inline]
+    pub fn offset(&self) -> u64 {
+        self.offset.load(Ordering::Relaxed)
     }
 }

@@ -1,6 +1,6 @@
 use anyhow::{bail, Context};
 use bytes::Bytes;
-use std::{fmt::Display, sync::atomic::Ordering, time::Duration};
+use std::{fmt::Display, time::Duration};
 
 use crate::{Resp, Role, DB};
 
@@ -65,6 +65,7 @@ impl Command {
         self
     }
 
+    #[inline]
     const fn silent(mut self, s: bool) -> Self {
         self.silent = s;
         self
@@ -161,7 +162,7 @@ impl Command {
                         let resp = Resp::Array(vec![
                             Resp::bulk("REPLCONF"),
                             Resp::bulk("ACK"),
-                            Resp::bulk(slave.offset.load(Ordering::Relaxed).to_string()),
+                            Resp::bulk(slave.offset().to_string()),
                         ]);
                         Self::new(resp).silent(false)
                     }
@@ -184,7 +185,7 @@ impl Command {
         };
 
         let master_replid = master.replid();
-        let master_repl_offset = master.repl_offset().load(Ordering::Relaxed);
+        let master_repl_offset = master.repl_offset();
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
         Ok(Self::new(resp).with_data(get_data()?))
@@ -229,7 +230,7 @@ impl<'a> Replication<'a> {
             Role::Master(master) => Self {
                 role,
                 master_replid: Some(master.replid()),
-                master_repl_offset: Some(master.repl_offset().load(Ordering::Relaxed)),
+                master_repl_offset: Some(master.repl_offset()),
             },
             Role::Slave(_) => Self {
                 role,
