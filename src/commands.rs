@@ -1,102 +1,83 @@
 use anyhow::{bail, Context};
 use bytes::Bytes;
 use std::{fmt::Display, time::Duration};
+use tokio::sync::broadcast::Sender;
 
-use crate::{Resp, Role, DB};
+use crate::{Handler, Resp, Role, DB};
 
-#[derive(Debug)]
-pub struct Command {
-    pub resp: Resp,
-    pub data: Option<Resp>,
-    pub slave_propagation: Option<Resp>,
-    pub silent: bool,
+type IterResp<'a> = std::slice::Iter<'a, Resp>;
+
+pub struct Command<'a> {
+    handler: &'a mut Handler,
+    role: &'a Role,
+    sender: Option<&'a Sender<Resp>>,
 }
 
-impl Command {
-    pub fn parse(value: &Resp, role: &Role) -> anyhow::Result<Self> {
-        match value {
-            Resp::Array(elems) => {
-                let mut values = elems.iter();
-                let Some(Resp::Bulk(command)) = values.next() else {
-                    bail!("Expected bulk string");
-                };
-                let mut resp = match command.to_ascii_lowercase().as_slice() {
-                    b"ping" => Self::ping(),
-                    b"echo" => Self::echo(values)?,
-                    b"get" => Self::get(values)?,
-                    b"set" => Self::set(values)?.and_propagate(role, elems),
-                    b"del" => Self::del(values).and_propagate(role, elems),
-                    b"info" => Self::info(values, role),
-                    b"replconf" => Self::replconf(values, role),
-                    b"psync" => Self::psync(values, role)?,
-                    _ => unimplemented!(),
-                };
-
-                // FIXME
-                if let Role::Master(_) = role {
-                    resp.silent = false;
-                }
-                Ok(resp)
-            }
-            _ => Err(anyhow::anyhow!("Unsupported RESP for command")),
-        }
-    }
-
-    const fn new(resp: Resp) -> Self {
+impl<'a> Command<'a> {
+    pub fn new(handler: &'a mut Handler, role: &'a Role, sender: Option<&'a Sender<Resp>>) -> Self {
         Self {
-            resp,
-            data: None,
-            slave_propagation: None,
-            silent: true,
+            handler,
+            role,
+            sender,
         }
     }
 
-    #[inline]
-    fn with_data(mut self, data: Resp) -> Self {
-        self.data = Some(data);
-        self
-    }
+    pub async fn parse(&mut self, value: &Resp) -> anyhow::Result<()> {
+        let Resp::Array(elems) = value else {
+            bail!("Unsupported RESP for command");
+        };
 
-    fn and_propagate(mut self, role: &Role, commands: &[Resp]) -> Self {
-        if let Role::Master(_) = role {
-            let resp = Resp::Array(commands.to_owned());
-            self.slave_propagation = Some(resp);
+        let mut values = elems.iter();
+        let Some(Resp::Bulk(command)) = values.next() else {
+            bail!("Expected bulk string");
+        };
+        match command.to_ascii_lowercase().as_slice() {
+            b"ping" => self.ping().await?,
+            b"echo" => self.echo(values).await?,
+            b"get" => self.get(values).await?,
+            b"set" => {
+                self.set(values).await?;
+                self.propagate(elems);
+            }
+            b"del" => {
+                self.del(values).await?;
+                self.propagate(elems);
+            }
+            b"info" => self.info(values).await?,
+            b"replconf" => self.replconf(values).await?,
+            b"psync" => self.psync(values).await?,
+            _ => unimplemented!(),
         }
-        self
+
+        Ok(())
     }
 
-    #[inline]
-    const fn silent(mut self, s: bool) -> Self {
-        self.silent = s;
-        self
+    fn propagate(&mut self, command: &[Resp]) {
+        if let Some(slaves) = self.sender {
+            // TODO check err
+            let _ = slaves.send(Resp::Array(command.to_owned()));
+        }
     }
 
-    fn ping() -> Self {
-        Self::new(Resp::simple("PONG"))
+    async fn ping(&mut self) -> anyhow::Result<()> {
+        self.handler
+            .write_checked(&Resp::simple("PONG"), self.role)
+            .await
     }
 
-    fn echo<'a, I>(i: I) -> anyhow::Result<Self>
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        Ok(Self::new(
-            i.into_iter().next().context("Missing ECHO value")?.clone(),
-        ))
+    async fn echo(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
+        self.handler
+            .write_checked(i.next().context("Missing ECHO value")?, self.role)
+            .await
     }
 
-    fn get<'a, I>(i: I) -> anyhow::Result<Self>
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        let key = i.into_iter().next().context("Missing Key")?.as_string()?;
-        Ok(Self::new(DB.get(&key).map_or(Resp::Null, Resp::Bulk)))
+    async fn get(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
+        let key = i.next().context("Missing Key")?.as_string()?;
+        let value = DB.get(&key).map_or(Resp::Null, Resp::Bulk);
+        self.handler.write_checked(&value, self.role).await
     }
 
-    fn set<'a, I>(i: I) -> anyhow::Result<Self>
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        let mut i = i.into_iter();
+    async fn set(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
         let key = i.next().context("Missing Key")?.as_string()?;
         let value = i.next().context("Missing Value")?.as_string()?;
         let px = {
@@ -108,50 +89,47 @@ impl Command {
             })
         };
         DB.set(key, value.into(), px);
-        Ok(Self::new(Resp::simple("OK")))
+        self.handler
+            .write_checked(&Resp::simple("OK"), self.role)
+            .await
     }
 
-    fn del<'a, I>(i: I) -> Self
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        let mut keys = i.into_iter();
-        let deleted = DB.multi_del(keys.by_ref().flat_map(Resp::as_string));
+    async fn del(&mut self, i: IterResp<'_>) -> anyhow::Result<()> {
+        let deleted = DB.multi_del(i.flat_map(Resp::as_string));
         let resp = Resp::Integer(i64::try_from(deleted).expect("Deleted to be in range of i64"));
-        Self::new(resp)
+        self.handler.write_checked(&resp, self.role).await
     }
 
-    fn info<'a, I>(i: I, role: &Role) -> Self
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        let Some(Resp::Bulk(arg)) = i.into_iter().next() else {
+    async fn info(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
+        let Some(Resp::Bulk(arg)) = i.next() else {
             // TODO return all sections
             let resp = Info {
-                replication: Some(Replication::new(role)),
+                replication: Some(Replication::new(self.role)),
             };
-            return Self::new(Resp::bulk(resp.to_string()));
+            return self
+                .handler
+                .write_checked(&Resp::bulk(resp.to_string()), self.role)
+                .await;
         };
 
         let resp = match arg.to_ascii_lowercase().as_slice() {
             b"replication" => Info {
-                replication: Some(Replication::new(role)),
+                replication: Some(Replication::new(self.role)),
             },
 
             _ => todo!("{arg:?}"),
         };
-        Self::new(Resp::bulk(resp.to_string()))
+        self.handler
+            .write_checked(&Resp::bulk(resp.to_string()), self.role)
+            .await
     }
 
-    fn replconf<'a, I>(i: I, role: &Role) -> Self
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
+    async fn replconf(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
         // TODO
-        match role {
-            Role::Master(_) => Self::new(Resp::simple("OK")),
+        match self.role {
+            Role::Master(_) => self.handler.write(&Resp::simple("OK")).await,
             Role::Slave(slave) => {
-                let conf = i.into_iter().next();
+                let conf = i.next();
 
                 let Some(Resp::Bulk(conf)) = conf else {
                     panic!()
@@ -164,7 +142,7 @@ impl Command {
                             Resp::bulk("ACK"),
                             Resp::bulk(slave.offset().to_string()),
                         ]);
-                        Self::new(resp).silent(false)
+                        self.handler.write(&resp).await
                     }
                     _ => todo!(),
                 }
@@ -172,15 +150,11 @@ impl Command {
         }
     }
 
-    fn psync<'a, I>(i: I, role: &Role) -> anyhow::Result<Self>
-    where
-        I: IntoIterator<Item = &'a Resp>,
-    {
-        let mut i = i.into_iter();
+    async fn psync(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
         let _id = i.next().context("Expected id")?;
         let _offset = i.next().context("Expected offset")?;
 
-        let Role::Master(master) = role else {
+        let Role::Master(master) = self.role else {
             panic!("Expected master")
         };
 
@@ -188,7 +162,14 @@ impl Command {
         let master_repl_offset = master.repl_offset();
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
-        Ok(Self::new(resp).with_data(get_data()?))
+        self.handler.write(&resp).await?;
+        self.handler.write(&get_data()?).await?;
+
+        let mut slave = self.sender.expect("Checked for master already").subscribe();
+        while let Ok(recv) = slave.recv().await {
+            self.handler.write(&recv).await?;
+        }
+        Ok(())
     }
 }
 

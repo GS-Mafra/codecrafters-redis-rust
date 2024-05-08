@@ -58,28 +58,12 @@ async fn handle_connection(
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };
+
+        Command::new(&mut handler, role, sender.as_ref())
+            .parse(&resp)
+            .await?;
         role.increase_offset(handler.offset);
         handler.offset = 0;
-
-        let response = Command::parse(&resp, role)?;
-
-        if !response.silent {
-            handler.write(&response.resp).await?;
-        }
-
-        if let Some(sender) = &sender {
-            if let Some(data) = response.data {
-                let mut slave = sender.subscribe();
-                handler.write(&data).await?;
-                while let Ok(recv) = slave.recv().await {
-                    handler.write(&recv).await?;
-                }
-            }
-
-            if let Some(propagation) = response.slave_propagation {
-                let _ = sender.send(propagation);
-            }
-        }
     }
 }
 

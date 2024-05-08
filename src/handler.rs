@@ -63,6 +63,13 @@ impl Handler {
         }
     }
 
+    pub async fn write_checked(&mut self, resp: &Resp, role: &Role) -> anyhow::Result<()> {
+        match role {
+            Role::Master(_) => self.write(resp).await,
+            Role::Slave(_) => Ok(())
+        }
+    }
+
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
         tracing::debug!("Writing: {resp:?}");
         match resp {
