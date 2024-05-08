@@ -72,12 +72,12 @@ impl Role {
         }
     }
 
-    #[inline]
     pub fn increase_offset(&self, by: u64) {
-        match self {
+        let prev = match self {
             Self::Master(master) => master.repl_offset.fetch_add(by, Ordering::Relaxed),
             Self::Slave(slave) => slave.offset.fetch_add(by, Ordering::Relaxed),
         };
+        tracing::info!("Increased offset of {prev} by {by}");
     }
 }
 

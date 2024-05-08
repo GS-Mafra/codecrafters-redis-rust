@@ -4,8 +4,6 @@ use bytes::{Buf, Bytes};
 use std::io::Cursor;
 use thiserror::Error;
 
-use crate::debug_print;
-
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Incomplete resp")]
@@ -27,7 +25,7 @@ pub enum Resp {
 
 impl Resp {
     pub fn parse(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
-        debug_print!("Parsing: {:?}", std::str::from_utf8(cur.chunk()));
+        tracing::trace!("Parsing: {:?}", Bytes::from(cur.chunk().to_owned()));
 
         let resp = match cur.get_u8() {
             b'*' => {
@@ -56,13 +54,13 @@ impl Resp {
             b':' => Self::Integer(slice_to_int::<i64>(read_line(cur)?)?),
             c => unimplemented!("{:?}", c as char),
         };
-        debug_print!("Parsed {resp:?}");
+        tracing::debug!("Parsed {resp:?}");
 
         Ok(resp)
     }
 
     pub fn check(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
-        debug_print!("Checking: {:?}", std::str::from_utf8(cur.chunk()));
+        tracing::trace!("Checking: {:?}", Bytes::from(cur.chunk().to_owned()));
 
         match get_u8(cur)? {
             b'*' => {

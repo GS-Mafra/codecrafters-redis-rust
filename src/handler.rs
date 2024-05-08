@@ -64,6 +64,7 @@ impl Handler {
     }
 
     pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
+        tracing::debug!("Writing: {resp:?}");
         match resp {
             Resp::Simple(inner) => {
                 self.stream.write_u8(b'+').await?;
@@ -110,6 +111,7 @@ impl Handler {
 
 pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Handler>> {
     if let Role::Slave(Slave { addr, .. }) = role {
+        tracing::info!("Connecting slave to master at {addr}");
         let master = TcpStream::connect(addr)
             .await
             .with_context(|| format!("Failed to connect to master at {addr}"))?;
@@ -122,8 +124,10 @@ pub async fn connect_slave(role: &Role, port: u16) -> anyhow::Result<Option<Hand
 
 async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     let mut handler = Handler::new(stream);
+    tracing::info!("Starting handshake");
 
     let resp = Resp::Array(vec![Resp::bulk("PING")]);
+    tracing::info!("Sending PING to master");
     handler.write(&resp).await?;
     check_handshake(&mut handler, "PONG").await?;
 
@@ -133,6 +137,7 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         let port = Resp::bulk(port.to_string());
         Resp::Array(vec![replconf, listening_port, port])
     };
+    tracing::info!("Sending first REPLCONF to master");
     handler.write(&resp).await?;
     check_handshake(&mut handler, "OK").await?;
 
@@ -142,6 +147,7 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         let the_capas = Resp::bulk("psync2");
         Resp::Array(vec![replconf, capa, the_capas])
     };
+    tracing::info!("Sending second REPLCONF to master");
     handler.write(&resp).await?;
     check_handshake(&mut handler, "OK").await?;
 
@@ -151,9 +157,10 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
         let offset = Resp::bulk("-1");
         Resp::Array(vec![psync, id, offset])
     };
+    tracing::info!("Sending PSYNC to master");
     handler.write(&resp).await?;
-
-    let _ = handler.read().await?;
+    let recv = handler.read().await?;
+    tracing::info!("Received: {recv:?}");
 
     // TODO do something with the data in handler.buf
     handler.read_bytes().await?;

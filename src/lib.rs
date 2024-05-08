@@ -14,15 +14,3 @@ pub use resp::Resp;
 
 pub(crate) mod db;
 pub(crate) use db::DB;
-
-#[macro_export]
-macro_rules! debug_print {
-    ($($x:tt)*) => {
-        {
-            #[cfg(debug_assertions)]
-            {
-                eprintln!($($x)*)
-            }
-        }
-    }
-}

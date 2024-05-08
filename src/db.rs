@@ -6,8 +6,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::debug_print;
-
 pub static DB: Lazy<Db> = Lazy::new(Db::new);
 
 #[derive(Debug, Clone)]
@@ -35,8 +33,8 @@ impl Db {
             expiration: px,
         };
 
+        tracing::debug!("Adding to db: \"{k}\": {:#?}", value);
         self.inner.write().unwrap().insert(k, value);
-        debug_print!("{:?}", self.inner.read().unwrap());
     }
 
     pub fn get(&self, k: &str) -> Option<Bytes> {
@@ -47,11 +45,11 @@ impl Db {
             .and_then(|val| {
                 let expired = val.expiration.is_some_and(|px| {
                     let time_passed = val.created.elapsed();
-                    debug_print!("{time_passed:.02?} passed of {px:.02?}");
+                    tracing::info!("\"{k}\": {time_passed:.02?} passed out of {px:.02?}");
                     px <= time_passed
                 });
                 if expired {
-                    eprintln!("{k} expired");
+                    tracing::info!("\"{k}\" expired");
                     self.del(k);
                     None
                 } else {
@@ -61,13 +59,16 @@ impl Db {
             .map(|v| v.inner)
     }
 
-    pub fn del(&self, k: &str) {
+    fn del(&self, k: &str) {
+        tracing::info!("Deleting: \"{k}\"");
         self.inner.write().unwrap().remove(k);
     }
 
-    pub fn multi_del(&self, k: impl Iterator<Item = impl AsRef<str>>) -> usize {
+    pub fn multi_del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {
         let mut lock = self.inner.write().unwrap();
-        k.filter_map(|x| lock.remove(x.as_ref())).count()
+        keys.filter_map(|k| lock.remove(k.as_ref()).map(|_| k))
+            .inspect(|k| tracing::info!("Deleted: \"{}\"", k.as_ref()))
+            .count()
     }
 }
 
