@@ -39,7 +39,6 @@ impl Handler {
             if 0 == self.reader.read_buf(&mut self.buf).await? {
                 return Ok(None);
             }
-            println!("{:?}", self.buf);
         }
     }
 
@@ -188,12 +187,15 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     handler.write(&resp).await?;
     let recv = handler.read().await?;
     tracing::info!("Received: {recv:?}");
-    println!("received: {recv:?}");
 
     // TODO do something with the data in handler.buf
+    // FIXME
+    println!("received: {recv:?}");
     println!("in buf: {:?}", handler.buf);
-    handler.read_bytes().await?;
-    println!("in buf after bytes: {:?}", handler.buf);
+    if handler.buf.is_empty() {
+        handler.read_bytes().await?;
+        println!("in buf after bytes: {:?}", handler.buf);
+    }
     handler.buf.clear();
 
     handler.offset = 0;
