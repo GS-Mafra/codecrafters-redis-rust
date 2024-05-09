@@ -8,7 +8,9 @@ use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-use redis_starter_rust::{args::Slave, connect_slave, handler::handle_connection, Arguments, Handler, Role};
+use redis_starter_rust::{
+    args::Slave, connect_slave, handler::handle_connection, Arguments, Handler, Role,
+};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -22,20 +24,17 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await.unwrap();
 
     let role = Arc::new(role);
-    if let Role::Slave(Slave {addr, ..}) = *role {
+    if let Role::Slave(Slave { addr, .. }) = *role {
         let role = role.clone();
-        tokio::spawn(async move { connect_slave(addr, &role, port).await});
+        tokio::spawn(async move { connect_slave(addr, &role, port).await });
     }
 
-    let master = role.get_slaves();
     loop {
-        let sender = master.cloned();
         let role = role.clone();
-
         match listener.accept().await {
             Ok((stream, _)) => {
                 tokio::spawn(async move {
-                    handle_connection(Handler::new(stream.into_split()), &role, sender)
+                    handle_connection(Handler::new(stream.into_split()), &role)
                         .await
                         .inspect_err(|e| tracing::error!("{e}"))
                 });
@@ -49,7 +48,6 @@ async fn main() -> anyhow::Result<()> {
 
 fn init_log(port: u16) -> WorkerGuard {
     let console_layer = tracing_subscriber::fmt::layer()
-        .without_time()
         .with_file(true)
         .with_line_number(true)
         .with_filter(EnvFilter::from_default_env());
@@ -64,7 +62,6 @@ fn init_log(port: u16) -> WorkerGuard {
     .map(|(file, guard)| {
         let layer = tracing_subscriber::fmt::layer()
             .with_writer(file)
-            .without_time()
             .with_file(true)
             .with_line_number(true)
             .with_ansi(false)
