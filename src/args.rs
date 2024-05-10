@@ -111,6 +111,12 @@ impl Master {
     pub fn repl_offset(&self) -> u64 {
         self.repl_offset.load(Ordering::Relaxed)
     }
+
+    #[inline]
+    pub fn connected_slaves(&self) -> usize {
+        self.channel.receiver_count()
+    }
+
     #[inline]
     pub fn send_to_slaves(&self, prop: Resp) -> Result<usize, SendError<Resp>> {
         self.channel.send(prop)

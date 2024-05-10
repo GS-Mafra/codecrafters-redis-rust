@@ -181,7 +181,7 @@ impl<'a> Command<'a> {
             .as_int()
             .and_then(|x| u64::try_from(x).map_err(anyhow::Error::from))
             .map(Duration::from_millis)?;
-        self.handler.write(&Resp::Integer(0)).await?;
+        self.handler.write(&Resp::Integer(i64::try_from(master.connected_slaves())?)).await?;
         Ok(())
     }
 }
@@ -218,7 +218,7 @@ impl<'a> Display for Info<'a> {
 #[derive(Debug)]
 struct Replication<'a> {
     role: &'a Role,
-    // connected_slaves:
+    connected_slaves: Option<usize>,
     master_replid: Option<&'a str>,
     master_repl_offset: Option<u64>,
     // second_repl_offset:
@@ -233,11 +233,13 @@ impl<'a> Replication<'a> {
         match role {
             Role::Master(master) => Self {
                 role,
+                connected_slaves: Some(master.connected_slaves()),
                 master_replid: Some(master.replid()),
                 master_repl_offset: Some(master.repl_offset()),
             },
             Role::Slave(_) => Self {
                 role,
+                connected_slaves: None,
                 master_replid: None,
                 master_repl_offset: None,
             },
@@ -249,6 +251,7 @@ impl<'a> Display for Replication<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let Self {
             role,
+            connected_slaves,
             master_replid,
             master_repl_offset,
         } = self;
@@ -260,6 +263,9 @@ impl<'a> Display for Replication<'a> {
         }
         f.write_str("\r\n")?;
 
+        if let Some(connected_slaves) = connected_slaves {
+            write!(f, "master_replid:{connected_slaves}\r\n")?;
+        }
         if let Some(master_replid) = master_replid {
             write!(f, "master_replid:{master_replid}\r\n")?;
         }
