@@ -101,17 +101,27 @@ impl Resp {
         match self {
             Self::Bulk(resp) => String::from_utf8(resp.to_vec()).context("Invalid String"),
             Self::Simple(resp) => Ok(resp.clone()),
-            _ => Err(anyhow::anyhow!("Not valid RESP for a string")),
+            resp => bail!("Not valid RESP for a string: {resp:?}"),
         }
     }
 
+    // TODO i64?
+    pub(crate) fn as_int(&self) -> anyhow::Result<i64> {
+        Ok(match self {
+            Self::Bulk(resp) => slice_to_int(resp)?,
+            Self::Simple(resp) => resp.parse()?,
+            Self::Integer(resp) => *resp,
+            resp => bail!("Not valid RESP for a int {resp:?}"),
+        })
+    }
+
     #[inline]
-    pub fn bulk(b: impl Into<Bytes>) -> Self {
+    pub(crate) fn bulk(b: impl Into<Bytes>) -> Self {
         Self::Bulk(b.into())
     }
 
     #[inline]
-    pub fn simple(s: impl Into<String>) -> Self {
+    pub(crate) fn simple(s: impl Into<String>) -> Self {
         Self::Simple(s.into())
     }
 }

@@ -7,7 +7,6 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpStream,
     },
-    sync::broadcast::Sender,
 };
 
 use crate::{args::Role, Command, Resp};
@@ -120,18 +119,12 @@ impl Handler {
     }
 }
 
-pub async fn handle_connection(
-    mut handler: Handler,
-    role: &Role,
-    sender: Option<Sender<Resp>>,
-) -> anyhow::Result<()> {
+pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Result<()> {
     loop {
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };
-        Command::new(&mut handler, role, sender.as_ref())
-            .parse(&resp)
-            .await?;
+        Command::new(&mut handler, role).parse(&resp).await?;
 
         role.increase_offset(handler.offset);
         handler.offset = 0;
@@ -144,7 +137,7 @@ pub async fn connect_slave(addr: SocketAddrV4, role: &Role, port: u16) -> anyhow
         .await
         .with_context(|| format!("Failed to connect to master at {addr}"))?;
     let handler = handshake(master, port).await?;
-    handle_connection(handler, role, None).await?;
+    handle_connection(handler, role).await?;
     Ok(())
 }
 
@@ -191,7 +184,7 @@ async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
     if handler.buf.is_empty() {
         handler.read_bytes().await?;
     }
-    
+
     // TODO do something with the rdb
     let _rdb = {
         let mut cur = Cursor::new(handler.buf.as_ref());

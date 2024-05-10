@@ -1,7 +1,6 @@
 use anyhow::{bail, Context};
 use bytes::Bytes;
 use std::{fmt::Display, time::Duration};
-use tokio::sync::broadcast::Sender;
 
 use crate::{Handler, Resp, Role, DB};
 
@@ -10,16 +9,11 @@ type IterResp<'a> = std::slice::Iter<'a, Resp>;
 pub struct Command<'a> {
     handler: &'a mut Handler,
     role: &'a Role,
-    sender: Option<&'a Sender<Resp>>,
 }
 
 impl<'a> Command<'a> {
-    pub fn new(handler: &'a mut Handler, role: &'a Role, sender: Option<&'a Sender<Resp>>) -> Self {
-        Self {
-            handler,
-            role,
-            sender,
-        }
+    pub fn new(handler: &'a mut Handler, role: &'a Role) -> Self {
+        Self { handler, role }
     }
 
     pub async fn parse(&mut self, value: &Resp) -> anyhow::Result<()> {
@@ -46,16 +40,17 @@ impl<'a> Command<'a> {
             b"info" => self.info(values).await?,
             b"replconf" => self.replconf(values).await?,
             b"psync" => self.psync(values).await?,
-            _ => unimplemented!(),
+            b"wait" => self.wait(values).await?,
+            _ => unimplemented!("{command:?}"),
         }
 
         Ok(())
     }
 
     fn propagate(&mut self, command: &[Resp]) {
-        if let Some(slaves) = self.sender {
-            // TODO check err
-            let _ = slaves.send(Resp::Array(command.to_owned()));
+        if let Role::Master(master) = self.role {
+            let command = Resp::Array(command.to_owned());
+            let _ = master.send_to_slaves(command);
         }
     }
 
@@ -119,9 +114,7 @@ impl<'a> Command<'a> {
 
             _ => todo!("{arg:?}"),
         };
-        self.handler
-            .write(&Resp::bulk(resp.to_string()))
-            .await
+        self.handler.write(&Resp::bulk(resp.to_string())).await
     }
 
     async fn replconf(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
@@ -134,7 +127,6 @@ impl<'a> Command<'a> {
                 let Some(Resp::Bulk(conf)) = conf else {
                     panic!()
                 };
-
                 match conf.to_ascii_lowercase().as_slice() {
                     b"getack" => {
                         let resp = Resp::Array(vec![
@@ -155,7 +147,7 @@ impl<'a> Command<'a> {
         let offset = i.next().context("Expected offset")?;
 
         let Role::Master(master) = self.role else {
-            panic!("Expected master")
+            bail!("Expected master")
         };
 
         let master_replid = master.replid();
@@ -170,10 +162,26 @@ impl<'a> Command<'a> {
         self.handler.write(&resp).await?;
         self.handler.write(&get_data()?).await?;
 
-        let mut slave = self.sender.expect("Checked for master already").subscribe();
+        let mut slave = master.spawn_slave();
         while let Ok(recv) = slave.recv().await {
             self.handler.write(&recv).await?;
         }
+        Ok(())
+    }
+
+    async fn wait(&mut self, mut i: IterResp<'_>) -> anyhow::Result<()> {
+        let Role::Master(master) = self.role else {
+            bail!("Expected Master");
+        };
+
+        let slaves = i.next().context("Missing num of slaves")?.as_int()?;
+        let timeout = i
+            .next()
+            .context("Missing timeout")?
+            .as_int()
+            .and_then(|x| u64::try_from(x).map_err(anyhow::Error::from))
+            .map(Duration::from_millis)?;
+        self.handler.write(&Resp::Integer(0)).await?;
         Ok(())
     }
 }

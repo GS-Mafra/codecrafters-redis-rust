@@ -4,7 +4,9 @@ use std::{
     net::{Ipv4Addr, SocketAddrV4},
     sync::atomic::{AtomicU64, Ordering},
 };
-use tokio::sync::broadcast::{self, Sender};
+use tokio::sync::broadcast::{self, error::SendError, Receiver, Sender};
+
+use crate::Resp;
 
 #[derive(Debug, Parser)]
 pub struct Arguments {
@@ -63,15 +65,6 @@ pub enum Role {
 }
 
 impl Role {
-    #[inline]
-    #[must_use]
-    pub const fn get_slaves(&self) -> Option<&Sender<crate::Resp>> {
-        match self {
-            Self::Master(master) => Some(&master.channel),
-            Self::Slave(_) => None,
-        }
-    }
-
     pub fn increase_offset(&self, by: u64) {
         let prev = match self {
             Self::Master(master) => master.repl_offset.fetch_add(by, Ordering::Relaxed),
@@ -91,7 +84,7 @@ impl Default for Role {
 pub struct Master {
     replid: String,
     repl_offset: AtomicU64,
-    channel: Sender<crate::Resp>,
+    channel: Sender<Resp>,
 }
 
 impl Default for Master {
@@ -110,15 +103,22 @@ impl Default for Master {
 
 impl Master {
     #[inline]
-    #[must_use]
     pub fn replid(&self) -> &str {
         &self.replid
     }
 
     #[inline]
-    #[must_use]
     pub fn repl_offset(&self) -> u64 {
         self.repl_offset.load(Ordering::Relaxed)
+    }
+    #[inline]
+    pub fn send_to_slaves(&self, prop: Resp) -> Result<usize, SendError<Resp>> {
+        self.channel.send(prop)
+    }
+
+    #[inline]
+    pub fn spawn_slave(&self) -> Receiver<Resp> {
+        self.channel.subscribe()
     }
 }
 
