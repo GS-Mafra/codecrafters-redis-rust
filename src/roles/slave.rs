@@ -7,7 +7,6 @@ use std::{
 };
 use tokio::net::TcpStream;
 
-use super::Role;
 use crate::{
     commands::{Ping, Psync, ReplConf},
     Command, Handler, Resp,
@@ -37,86 +36,84 @@ impl Slave {
         let prev = self.offset.fetch_add(by, Ordering::Relaxed);
         tracing::info!("Increased offset of {prev} to {}", by + prev);
     }
-}
 
-pub async fn connect(role: &Role, port: u16) -> anyhow::Result<()> {
-    let Role::Slave(slave) = role else {
-        return Ok(());
-    };
+    pub async fn connect(&self, port: u16) -> anyhow::Result<()> {
+        tracing::info!("Connecting slave to master at {}", self.addr);
+        let master = TcpStream::connect(self.addr)
+            .await
+            .with_context(|| format!("Failed to connect to master at {}", self.addr))?;
+        let handler = self.handshake(master, port).await?;
 
-    tracing::info!("Connecting slave to master at {}", slave.addr);
-    let master = TcpStream::connect(slave.addr)
-        .await
-        .with_context(|| format!("Failed to connect to master at {}", slave.addr))?;
-    let handler = handshake(master, port).await?;
-
-    handle_connection(slave, handler, role).await
-}
-
-async fn handle_connection(slave: &Slave, mut handler: Handler, role: &Role) -> anyhow::Result<()> {
-    loop {
-        let Some(resp) = handler.read().await? else {
-            return Ok(());
-        };
-        let parsed_cmd = match Command::parse(&resp) {
-            Ok((cmd, _)) => cmd,
-            Err(e) => {
-                tracing::error!("{}", e);
-                continue;
-            }
-        };
-        match parsed_cmd {
-            Command::Set(set) => set.apply(),
-            Command::Del(del) => {
-                del.apply();
-            }
-            Command::ReplConf(replconf) => replconf.apply_and_respond(&mut handler, role).await?,
-            _ => (),
-        };
-        slave.increase_offset(resp.len() as u64);
-    }
-}
-
-async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
-    let mut handler = Handler::new(stream);
-    tracing::info!("Starting handshake");
-
-    tracing::info!("Sending PING to master");
-    handler.write(&Ping::new(None).into_resp()).await?;
-    check_handshake(&mut handler, "PONG").await?;
-
-    tracing::info!("Sending first REPLCONF to master");
-    handler
-        .write(&ReplConf::ListeningPort(port).into_resp())
-        .await?;
-    check_handshake(&mut handler, "OK").await?;
-
-    tracing::info!("Sending second REPLCONF to master");
-    handler
-        .write(&ReplConf::Capa("psync2".into()).into_resp())
-        .await?;
-    check_handshake(&mut handler, "OK").await?;
-
-    tracing::info!("Sending PSYNC to master");
-    handler
-        .write(&Psync::new("?".into(), -1).into_resp())
-        .await?;
-    let recv = handler.read().await?;
-    tracing::info!("Received: {recv:?}");
-
-    if handler.buf.is_empty() {
-        handler.read_bytes().await?;
+        self.handle_connection(handler).await
     }
 
-    // TODO do something with the rdb
-    let _rdb = {
-        let mut cur = Cursor::new(handler.buf.as_ref());
-        let rdb = Resp::parse_rdb(&mut cur)?;
-        handler.buf.advance(cur.position().try_into()?);
-        rdb
-    };
+    async fn handle_connection(&self, mut handler: Handler) -> anyhow::Result<()> {
+        loop {
+            let Some(resp) = handler.read().await? else {
+                return Ok(());
+            };
+            let parsed_cmd = match Command::parse(&resp) {
+                Ok((cmd, _)) => cmd,
+                Err(e) => {
+                    tracing::error!("{}", e);
+                    continue;
+                }
+            };
+            match parsed_cmd {
+                Command::Set(set) => set.apply(),
+                Command::Del(del) => {
+                    del.apply();
+                }
+                Command::ReplConf(replconf) => {
+                    replconf.apply_and_respond_slave(&mut handler, self).await?;
+                }
+                _ => (),
+            };
+            self.increase_offset(resp.len() as u64);
+        }
+    }
 
-    Ok(handler)
+    async fn handshake(&self, stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
+        let mut handler = Handler::new(stream);
+        tracing::info!("Starting handshake");
+
+        tracing::info!("Sending PING to master");
+        handler.write(&Ping::new(None).into_resp()).await?;
+        check_handshake(&mut handler, "PONG").await?;
+
+        tracing::info!("Sending first REPLCONF to master");
+        handler
+            .write(&ReplConf::ListeningPort(port).into_resp())
+            .await?;
+        check_handshake(&mut handler, "OK").await?;
+
+        tracing::info!("Sending second REPLCONF to master");
+        handler
+            .write(&ReplConf::Capa("psync2".into()).into_resp())
+            .await?;
+        check_handshake(&mut handler, "OK").await?;
+
+        tracing::info!("Sending PSYNC to master");
+        handler
+            .write(&Psync::new("?".into(), -1).into_resp())
+            .await?;
+        let recv = handler.read().await?;
+        tracing::info!("Received: {recv:?}");
+
+        if handler.buf.is_empty() {
+            handler.read_bytes().await?;
+        }
+
+        // TODO do something with the rdb
+        let _rdb = {
+            let mut cur = Cursor::new(handler.buf.as_ref());
+            let rdb = Resp::parse_rdb(&mut cur)?;
+            handler.buf.advance(cur.position().try_into()?);
+            rdb
+        };
+
+        Ok(handler)
+    }
 }
 
 async fn check_handshake(handler: &mut Handler, msg: &str) -> anyhow::Result<()> {

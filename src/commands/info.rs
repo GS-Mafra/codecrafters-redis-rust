@@ -45,7 +45,7 @@ enum Replication<'a> {
 }
 
 impl<'a> Replication<'a> {
-    fn new(role: &'a Role) -> Self {
+    const fn new(role: &'a Role) -> Self {
         match role {
             Role::Master(master) => Self::Master(master),
             Role::Slave(slave) => Self::Slave(slave),

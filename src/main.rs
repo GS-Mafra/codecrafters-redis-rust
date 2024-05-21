@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 use std::{
     fs::File,
     net::{Ipv4Addr, SocketAddrV4},
@@ -7,31 +8,27 @@ use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-use redis_starter_rust::{handle_connection, roles::slave, Arguments, Handler};
+use redis_starter_rust::{handle_connection, Handler, Role, ARGUMENTS};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let arguments = Arguments::parse();
-    let _guard = init_log(arguments.port);
+    Lazy::force(&ARGUMENTS);
+    let _guard = init_log(ARGUMENTS.port);
+    tracing::debug!("{:#?}", *ARGUMENTS);
 
-    tracing::debug!("{:#?}", arguments);
-    let Arguments { port, role } = arguments;
-
-    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port))
         .await
         .unwrap();
 
-    tokio::spawn({
-        let role = role.clone();
-        async move { slave::connect(&role, port).await }
-    });
+    if let Role::Slave(slave) = &ARGUMENTS.role {
+        tokio::spawn(async move { slave.connect(ARGUMENTS.port).await });
+    }
 
     loop {
         match listener.accept().await {
             Ok((stream, _)) => {
-                let role = role.clone();
                 tokio::spawn(async move {
-                    handle_connection(Handler::new(stream), &role)
+                    handle_connection(Handler::new(stream), &ARGUMENTS.role)
                         .await
                         .inspect_err(|e| tracing::error!("{e}"))
                 });

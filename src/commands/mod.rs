@@ -25,6 +25,9 @@ pub use wait::Wait;
 mod psync;
 pub use psync::Psync;
 
+mod config;
+pub use config::Config;
+
 use anyhow::bail;
 
 use crate::Resp;
@@ -36,11 +39,12 @@ pub enum Command<'a> {
     Echo(Echo<'a>),
     Get(Get),
     Set(Set),
-    Del(Del<'a>),
+    Del(Del),
     Info(Info),
     ReplConf(ReplConf),
     Wait(Wait),
     Psync(Psync),
+    Config(Config<'a>),
 }
 
 impl<'a> Command<'a> {
@@ -64,6 +68,7 @@ impl<'a> Command<'a> {
             b"replconf" => Self::ReplConf(ReplConf::parse(values)?),
             b"wait" => Self::Wait(Wait::parse(values)?),
             b"psync" => Self::Psync(Psync::parse(values)?),
+            b"config" => Self::Config(Config::parse(values)?),
             _ => unimplemented!("{command:?}"),
         };
         Ok((parsed_cmd, raw_cmd))

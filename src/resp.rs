@@ -250,7 +250,7 @@ mod tests {
         let to_resp = |bytes: &[u8]| Resp::parse(&mut Cursor::new(bytes)).unwrap();
 
         let array_bulk = b"*2\r\n$4\r\necho\r\n$3\r\nhey\r\n";
-        pretty_assertions::assert_eq!(to_resp(array_bulk.as_ref()).len(), array_bulk.len());
+        pretty_assertions::assert_eq!(to_resp(array_bulk).len(), array_bulk.len());
 
         let neg_int = format!(":{}\r\n", i64::MIN);
         pretty_assertions::assert_eq!(to_resp(neg_int.as_bytes()).len(), neg_int.len());

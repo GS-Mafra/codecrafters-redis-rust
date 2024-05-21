@@ -141,8 +141,9 @@ pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Res
                 propagate(role, raw_cmd).await;
             }
             Command::Info(info) => info.apply_and_respond(&mut handler, role).await?,
-            Command::ReplConf(replconf) => replconf.apply_and_respond(&mut handler, role).await?,
+            Command::ReplConf(replconf) => replconf.apply_and_respond(&mut handler).await?,
             Command::Wait(wait) => wait.apply_and_respond(&mut handler, role).await?,
+            Command::Config(config) => config.apply_and_respond(&mut handler).await?,
             Command::Psync(psync) => 'psync: {
                 let Role::Master(master) = role else {
                     break 'psync;
