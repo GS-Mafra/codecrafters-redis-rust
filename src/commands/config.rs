@@ -34,13 +34,13 @@ impl<'a> Config<'a> {
             match param.to_ascii_lowercase().as_slice() {
                 b"dir" => {
                     if let Some(dir) = &ARGUMENTS.dir {
-                        v.push(Resp::bulk("dir"));
+                        v.push(Resp::Bulk((*param).clone()));
                         v.push(Resp::bulk(dir.as_os_str().as_encoded_bytes()));
                     }
                 }
                 b"dbfilename" => {
                     if let Some(dbfilename) = &ARGUMENTS.db_filename {
-                        v.push(Resp::bulk("dbfilename"));
+                        v.push(Resp::Bulk((*param).clone()));
                         v.push(Resp::bulk(dbfilename.as_os_str().as_encoded_bytes()));
                     }
                 }
