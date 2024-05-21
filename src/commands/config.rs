@@ -29,24 +29,24 @@ impl<'a> Config<'a> {
     }
 
     async fn handle_get(params: &[&Bytes], handler: &mut Handler) -> anyhow::Result<()> {
-        let mut v = Vec::new();
-        for param in params {
+        let v = params.iter().fold(Vec::new(), |mut acc, param| {
             match param.to_ascii_lowercase().as_slice() {
                 b"dir" => {
                     if let Some(dir) = &ARGUMENTS.dir {
-                        v.push(Resp::Bulk((*param).clone()));
-                        v.push(Resp::bulk(dir.as_os_str().as_encoded_bytes()));
+                        acc.push(Resp::Bulk((*param).clone()));
+                        acc.push(Resp::bulk(dir.as_os_str().as_encoded_bytes()));
                     }
                 }
                 b"dbfilename" => {
                     if let Some(dbfilename) = &ARGUMENTS.db_filename {
-                        v.push(Resp::Bulk((*param).clone()));
-                        v.push(Resp::bulk(dbfilename.as_os_str().as_encoded_bytes()));
+                        acc.push(Resp::Bulk((*param).clone()));
+                        acc.push(Resp::bulk(dbfilename.as_os_str().as_encoded_bytes()));
                     }
                 }
                 _ => todo!("{param:?}"),
             }
-        }
+            acc
+        });
         let resp = Resp::Array(v);
         handler.write(&resp).await?;
         Ok(())
