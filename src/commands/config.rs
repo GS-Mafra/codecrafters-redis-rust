@@ -29,29 +29,26 @@ impl<'a> Config<'a> {
     }
 
     async fn handle_get(params: &[&Bytes], handler: &mut Handler) -> anyhow::Result<()> {
+        let mut v = Vec::new();
         for param in params {
             match param.to_ascii_lowercase().as_slice() {
                 b"dir" => {
                     if let Some(dir) = &ARGUMENTS.dir {
-                        let resp = Resp::Array(vec![
-                            Resp::bulk("dir"),
-                            Resp::bulk(dir.as_os_str().as_encoded_bytes()),
-                        ]);
-                        handler.write(&resp).await?;
+                        v.push(Resp::bulk("dir"));
+                        v.push(Resp::bulk(dir.as_os_str().as_encoded_bytes()));
                     }
                 }
                 b"dbfilename" => {
                     if let Some(dbfilename) = &ARGUMENTS.db_filename {
-                        let resp = Resp::Array(vec![
-                            Resp::bulk("dbfilename"),
-                            Resp::bulk(dbfilename.as_os_str().as_encoded_bytes()),
-                        ]);
-                        handler.write(&resp).await?;
+                        v.push(Resp::bulk("dbfilename"));
+                        v.push(Resp::bulk(dbfilename.as_os_str().as_encoded_bytes()));
                     }
                 }
                 _ => todo!("{param:?}"),
             }
         }
+        let resp = Resp::Array(v);
+        handler.write(&resp).await?;
         Ok(())
     }
 }
