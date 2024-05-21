@@ -1,6 +1,5 @@
-use anyhow::{bail, Context};
 use bytes::{Buf, Bytes, BytesMut};
-use std::{io::Cursor, net::SocketAddrV4};
+use std::{io::Cursor, net::SocketAddr};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::{
@@ -9,23 +8,25 @@ use tokio::{
     },
 };
 
-use crate::{args::Role, Command, Resp};
+use crate::{Command, Resp, Role};
 
+#[derive(Debug)]
 pub struct Handler {
+    pub(crate) addr: SocketAddr,
     reader: BufReader<OwnedReadHalf>,
     writer: BufWriter<OwnedWriteHalf>,
-    buf: BytesMut,
-    offset: u64,
+    pub(crate) buf: BytesMut,
 }
 
 impl Handler {
-    #[must_use]
-    pub fn new((reader, writer): (OwnedReadHalf, OwnedWriteHalf)) -> Self {
+    pub fn new(stream: TcpStream) -> Self {
+        let addr = stream.peer_addr().unwrap();
+        let (reader, writer) = stream.into_split();
         Self {
+            addr,
             reader: BufReader::new(reader),
             writer: BufWriter::new(writer),
             buf: BytesMut::with_capacity(1024 * 4),
-            offset: 0,
         }
     }
 
@@ -41,7 +42,7 @@ impl Handler {
         }
     }
 
-    async fn read_bytes(&mut self) -> anyhow::Result<()> {
+    pub(crate) async fn read_bytes(&mut self) -> anyhow::Result<()> {
         self.reader.read_buf(&mut self.buf).await?;
         Ok(())
     }
@@ -58,7 +59,6 @@ impl Handler {
                 cur.set_position(0);
                 let resp = Resp::parse(&mut cur).map(Option::Some);
                 self.buf.advance(len);
-                self.offset += u64::try_from(len)?;
                 resp
             }
             Err(crate::resp::Error::Incomplete) => Ok(None),
@@ -66,14 +66,7 @@ impl Handler {
         }
     }
 
-    pub async fn write_checked(&mut self, resp: &Resp, role: &Role) -> anyhow::Result<()> {
-        match role {
-            Role::Master(_) => self.write(resp).await,
-            Role::Slave(_) => Ok(()),
-        }
-    }
-
-    pub async fn write(&mut self, resp: &Resp) -> anyhow::Result<()> {
+    pub async fn write(&mut self, resp: &Resp) -> Result<(), std::io::Error> {
         tracing::debug!("Writing: {resp:?}");
         match resp {
             Resp::Simple(inner) => {
@@ -105,7 +98,7 @@ impl Handler {
         Ok(())
     }
 
-    async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> anyhow::Result<()> {
+    async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> Result<(), std::io::Error> {
         self.writer.write_u8(b'$').await?;
         self.writer
             .write_all(bulk.len().to_string().as_bytes())
@@ -117,6 +110,14 @@ impl Handler {
         }
         Ok(())
     }
+
+    pub(crate) fn disconnected(e: &std::io::Error) -> bool {
+        use std::io::ErrorKind::{ConnectionAborted, ConnectionReset, UnexpectedEof};
+        matches!(
+            e.kind(),
+            ConnectionAborted | UnexpectedEof | ConnectionReset
+        )
+    }
 }
 
 pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Result<()> {
@@ -124,83 +125,39 @@ pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Res
         let Some(resp) = handler.read().await? else {
             return Ok(());
         };
-        Command::new(&mut handler, role).parse(&resp).await?;
 
-        role.increase_offset(handler.offset);
-        handler.offset = 0;
+        let (parsed_cmd, raw_cmd) = Command::parse(&resp)?;
+
+        match parsed_cmd {
+            Command::Ping(ping) => ping.apply_and_respond(&mut handler).await?,
+            Command::Echo(echo) => echo.apply_and_respond(&mut handler).await?,
+            Command::Get(get) => get.apply_and_respond(&mut handler).await?,
+            Command::Set(set) => {
+                set.apply_and_respond(&mut handler).await?;
+                propagate(role, raw_cmd).await;
+            }
+            Command::Del(del) => {
+                del.apply_and_respond(&mut handler).await?;
+                propagate(role, raw_cmd).await;
+            }
+            Command::Info(info) => info.apply_and_respond(&mut handler, role).await?,
+            Command::ReplConf(replconf) => replconf.apply_and_respond(&mut handler, role).await?,
+            Command::Wait(wait) => wait.apply_and_respond(&mut handler, role).await?,
+            Command::Psync(psync) => 'psync: {
+                let Role::Master(master) = role else {
+                    break 'psync;
+                };
+                psync.apply_and_respond(&mut handler, master).await?;
+                master.add_slave(handler).await;
+                return Ok(());
+            }
+        };
     }
 }
 
-pub async fn connect_slave(addr: SocketAddrV4, role: &Role, port: u16) -> anyhow::Result<()> {
-    tracing::info!("Connecting slave to master at {addr}");
-    let master = TcpStream::connect(addr)
-        .await
-        .with_context(|| format!("Failed to connect to master at {addr}"))?;
-    let handler = handshake(master, port).await?;
-    handle_connection(handler, role).await?;
-    Ok(())
-}
-
-async fn handshake(stream: TcpStream, port: u16) -> anyhow::Result<Handler> {
-    let mut handler = Handler::new(stream.into_split());
-    tracing::info!("Starting handshake");
-
-    let resp = Resp::Array(vec![Resp::bulk("PING")]);
-    tracing::info!("Sending PING to master");
-    handler.write(&resp).await?;
-    check_handshake(&mut handler, "PONG").await?;
-
-    let resp = {
-        let replconf = Resp::bulk("REPLCONF");
-        let listening_port = Resp::bulk("listening-port");
-        let port = Resp::bulk(port.to_string());
-        Resp::Array(vec![replconf, listening_port, port])
-    };
-    tracing::info!("Sending first REPLCONF to master");
-    handler.write(&resp).await?;
-    check_handshake(&mut handler, "OK").await?;
-
-    let resp = {
-        let replconf = Resp::bulk("REPLCONF");
-        let capa = Resp::bulk("capa");
-        let the_capas = Resp::bulk("psync2");
-        Resp::Array(vec![replconf, capa, the_capas])
-    };
-    tracing::info!("Sending second REPLCONF to master");
-    handler.write(&resp).await?;
-    check_handshake(&mut handler, "OK").await?;
-
-    let resp = {
-        let psync = Resp::bulk("PSYNC");
-        let id = Resp::bulk("?");
-        let offset = Resp::bulk("-1");
-        Resp::Array(vec![psync, id, offset])
-    };
-    tracing::info!("Sending PSYNC to master");
-    handler.write(&resp).await?;
-    let recv = handler.read().await?;
-    tracing::info!("Received: {recv:?}");
-
-    if handler.buf.is_empty() {
-        handler.read_bytes().await?;
+async fn propagate(role: &Role, command: &[Resp]) {
+    if let Role::Master(master) = role {
+        let command = Resp::Array(command.to_owned());
+        master.propagate(&command, true).await;
     }
-
-    // TODO do something with the rdb
-    let _rdb = {
-        let mut cur = Cursor::new(handler.buf.as_ref());
-        let rdb = Resp::parse_rdb(&mut cur)?;
-        handler.buf.advance(cur.position().try_into()?);
-        rdb
-    };
-
-    handler.offset = 0;
-    Ok(handler)
-}
-
-async fn check_handshake(handler: &mut Handler, msg: &str) -> anyhow::Result<()> {
-    let recv = handler.read().await?;
-    if !recv.is_some_and(|x| Resp::simple(msg) == x) {
-        bail!("Expected {msg}")
-    }
-    Ok(())
 }

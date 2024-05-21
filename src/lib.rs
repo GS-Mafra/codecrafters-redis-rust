@@ -1,16 +1,19 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
-pub mod args;
-pub use args::{Role, Arguments};
+mod args;
+pub use args::Arguments;
 
-pub mod commands;
+mod commands;
 pub use commands::Command;
 
-pub mod handler;
-pub use handler::{connect_slave, Handler};
+mod handler;
+pub use handler::{handle_connection, Handler};
+
+pub mod roles;
+pub use roles::{Master, Role, Slave};
 
 mod resp;
 pub use resp::Resp;
 
-pub(crate) mod db;
+mod db;
 pub(crate) use db::DB;

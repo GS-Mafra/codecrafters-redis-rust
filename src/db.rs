@@ -43,10 +43,10 @@ impl Db {
 
         value
             .and_then(|val| {
-                let expired = val.expiration.is_some_and(|px| {
+                let expired = val.expiration.is_some_and(|exp| {
                     let time_passed = val.created.elapsed();
-                    tracing::info!("\"{k}\": {time_passed:.02?} passed out of {px:.02?}");
-                    px <= time_passed
+                    tracing::info!("\"{k}\": {time_passed:.02?} passed out of {exp:.02?}");
+                    exp <= time_passed
                 });
                 if expired {
                     tracing::info!("\"{k}\" expired");

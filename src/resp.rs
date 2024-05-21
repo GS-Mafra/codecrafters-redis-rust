@@ -19,11 +19,12 @@ pub enum Resp {
     Array(Vec<Self>),
     Integer(i64),
     Data(Bytes),
-    // NullBulk
     Null,
 }
 
 impl Resp {
+    const CRLF_LEN: usize = b"\r\n".len();
+
     pub fn parse_rdb(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Bytes> {
         if get_u8(cur)? != b'$' {
             bail!("Not a rdb");
@@ -35,7 +36,7 @@ impl Resp {
     }
 
     pub fn parse(cur: &mut Cursor<&[u8]>) -> anyhow::Result<Self> {
-        tracing::trace!("Parsing: {:?}", Bytes::from(cur.chunk().to_owned()));
+        tracing::trace!("Parsing: {:?}", Bytes::copy_from_slice(cur.chunk()));
 
         let resp = match get_u8(cur)? {
             b'*' => {
@@ -58,7 +59,7 @@ impl Resp {
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
 
                 let data = Bytes::copy_from_slice(&cur.chunk()[..len]);
-                advance(cur, len + b"\r\n".len())?;
+                advance(cur, len + Self::CRLF_LEN)?;
                 Self::Bulk(data)
             }
             b':' => Self::Integer(slice_to_int::<i64>(read_line(cur)?)?),
@@ -70,7 +71,7 @@ impl Resp {
     }
 
     pub fn check(cur: &mut Cursor<&[u8]>) -> Result<(), Error> {
-        tracing::trace!("Checking: {:?}", Bytes::from(cur.chunk().to_owned()));
+        tracing::trace!("Checking: {:?}", Bytes::copy_from_slice(cur.chunk()));
 
         match get_u8(cur)? {
             b'*' => {
@@ -90,7 +91,7 @@ impl Resp {
                 }
                 let len = slice_to_int::<usize>(read_line(cur)?)?;
 
-                advance(cur, len + b"\r\n".len())?;
+                advance(cur, len + Self::CRLF_LEN)?;
             }
             c => unimplemented!("{:?}", c as char),
         }
@@ -105,12 +106,43 @@ impl Resp {
         }
     }
 
-    // TODO i64?
-    pub(crate) fn as_int(&self) -> anyhow::Result<i64> {
+    pub(crate) fn as_bytes(&self) -> anyhow::Result<Bytes> {
+        Ok(match self {
+            Self::Bulk(inner) => inner.clone(),
+            Self::Simple(inner) => Bytes::copy_from_slice(inner.as_bytes()),
+            resp => bail!("Not valid RESP for bytes {resp:?}"),
+        })
+    }
+
+    #[inline]
+    pub(crate) const fn as_bulk(&self) -> Option<&Bytes> {
+        match self {
+            Self::Bulk(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn as_array(&self) -> Option<&Vec<Self>> {
+        match self {
+            Self::Array(elems) => Some(elems),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) const fn as_simple(&self) -> Option<&String> {
+        match self {
+            Self::Simple(inner) => Some(inner),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn to_int<T: FromRadix10SignedChecked>(&self) -> anyhow::Result<T> {
         Ok(match self {
             Self::Bulk(resp) => slice_to_int(resp)?,
-            Self::Simple(resp) => resp.parse()?,
-            Self::Integer(resp) => *resp,
+            Self::Simple(resp) => slice_to_int(resp.as_bytes())?,
+            // Self::Integer(resp) => *resp,
             resp => bail!("Not valid RESP for a int {resp:?}"),
         })
     }
@@ -123,6 +155,34 @@ impl Resp {
     #[inline]
     pub(crate) fn simple(s: impl Into<String>) -> Self {
         Self::Simple(s.into())
+    }
+
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        let mut len = 1_usize;
+        let int_len = |int: usize| int.checked_ilog10().unwrap_or(0) as usize + 1;
+
+        match self {
+            Self::Simple(inner) => len += inner.len() + Self::CRLF_LEN,
+            Self::Bulk(inner) => {
+                len += int_len(inner.len()) + Self::CRLF_LEN + inner.len() + Self::CRLF_LEN;
+            }
+            Self::Array(elems) => {
+                len += int_len(elems.len())
+                    + Self::CRLF_LEN
+                    + elems.iter().fold(0, |acc, x| acc + Self::len(x));
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            Self::Integer(inner) => {
+                if inner.is_negative() {
+                    len += 1;
+                }
+                len += int_len(inner.unsigned_abs() as usize) + Self::CRLF_LEN;
+            }
+            Self::Data(inner) => len += int_len(inner.len()) + Self::CRLF_LEN + inner.len(),
+            Self::Null => len += b"-1".len() + Self::CRLF_LEN,
+        };
+        len
     }
 }
 
@@ -151,11 +211,11 @@ fn read_line<'a>(cur: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
     Err(Error::Incomplete)
 }
 
-fn slice_to_int<T>(slice: &[u8]) -> anyhow::Result<T>
+pub fn slice_to_int<T>(slice: impl AsRef<[u8]>) -> anyhow::Result<T>
 where
     T: FromRadix10SignedChecked,
 {
-    atoi::atoi::<T>(slice).context("Failed to parse length")
+    atoi::atoi::<T>(slice.as_ref()).context("Failed to parse int from slice")
 }
 
 #[cfg(test)]
@@ -176,12 +236,32 @@ mod tests {
             let expected = Resp::Array(vec![Resp::bulk("echo"), Resp::bulk("hey")]);
             pretty_assertions::assert_eq!(resp(&mut cur), expected);
         }
-        assert!(cur.remaining() == ping.len());
+        pretty_assertions::assert_eq!(cur.remaining(), ping.len());
         {
             let expected = Resp::Array(vec![Resp::bulk("ping")]);
             pretty_assertions::assert_eq!(resp(&mut cur), expected);
         }
 
         assert!(!cur.has_remaining());
+    }
+
+    #[test]
+    fn len() {
+        let to_resp = |bytes: &[u8]| Resp::parse(&mut Cursor::new(bytes)).unwrap();
+
+        let array_bulk = b"*2\r\n$4\r\necho\r\n$3\r\nhey\r\n";
+        pretty_assertions::assert_eq!(to_resp(array_bulk.as_ref()).len(), array_bulk.len());
+
+        let neg_int = format!(":{}\r\n", i64::MIN);
+        pretty_assertions::assert_eq!(to_resp(neg_int.as_bytes()).len(), neg_int.len());
+
+        let int = format!(":{}\r\n", i64::MAX);
+        pretty_assertions::assert_eq!(to_resp(int.as_bytes()).len(), int.len());
+
+        let null = b"$-1\r\n";
+        pretty_assertions::assert_eq!(to_resp(null).len(), null.len());
+
+        let simple = b"+OK\r\n";
+        pretty_assertions::assert_eq!(to_resp(simple).len(), simple.len());
     }
 }
