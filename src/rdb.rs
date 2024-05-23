@@ -35,6 +35,7 @@ impl Rdb {
 
         ensure!(bytes.get_u8() == 0xff, "End of RDB");
         let checksum = bytes.split_to(8);
+        println!("chunk: {:?}", bytes.chunk());
         ensure!(bytes.is_empty());
 
         let rdb = Self {
