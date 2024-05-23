@@ -35,7 +35,10 @@ impl Rdb {
 
         ensure!(bytes.get_u8() == 0xff, "End of RDB");
         let checksum = bytes.split_to(8);
-        println!("chunk: {:?}", bytes.chunk());
+        // FIXME test adds \n ?
+        if bytes.remaining() == 1 && bytes[0] == b'\n' {
+            bytes.advance(1);
+        }
         ensure!(bytes.is_empty());
 
         let rdb = Self {
