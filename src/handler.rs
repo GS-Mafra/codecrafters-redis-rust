@@ -121,6 +121,8 @@ impl Handler {
 }
 
 pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Result<()> {
+    use Command::{Config, Del, Echo, Get, Info, Keys, Ping, Psync, ReplConf, Set, Type, Wait};
+
     loop {
         let Some(resp) = handler.read().await? else {
             return Ok(());
@@ -129,23 +131,24 @@ pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Res
         let (parsed_cmd, raw_cmd) = Command::parse(&resp)?;
 
         match parsed_cmd {
-            Command::Ping(ping) => ping.apply_and_respond(&mut handler).await?,
-            Command::Echo(echo) => echo.apply_and_respond(&mut handler).await?,
-            Command::Get(get) => get.apply_and_respond(&mut handler).await?,
-            Command::Set(set) => {
+            Ping(ping) => ping.apply_and_respond(&mut handler).await?,
+            Echo(echo) => echo.apply_and_respond(&mut handler).await?,
+            Get(get) => get.apply_and_respond(&mut handler).await?,
+            Set(set) => {
                 set.apply_and_respond(&mut handler).await?;
                 propagate(role, raw_cmd).await;
             }
-            Command::Del(del) => {
+            Del(del) => {
                 del.apply_and_respond(&mut handler).await?;
                 propagate(role, raw_cmd).await;
             }
-            Command::Info(info) => info.apply_and_respond(&mut handler, role).await?,
-            Command::ReplConf(replconf) => replconf.apply_and_respond(&mut handler).await?,
-            Command::Wait(wait) => wait.apply_and_respond(&mut handler, role).await?,
-            Command::Config(config) => config.apply_and_respond(&mut handler).await?,
-            Command::Keys(keys) => keys.apply_and_respond(&mut handler).await?,
-            Command::Psync(psync) => 'psync: {
+            Info(info) => info.apply_and_respond(&mut handler, role).await?,
+            ReplConf(replconf) => replconf.apply_and_respond(&mut handler).await?,
+            Wait(wait) => wait.apply_and_respond(&mut handler, role).await?,
+            Config(config) => config.apply_and_respond(&mut handler).await?,
+            Keys(keys) => keys.apply_and_respond(&mut handler).await?,
+            Type(r#type) => r#type.apply_and_respond(&mut handler).await?,
+            Psync(psync) => 'psync: {
                 let Role::Master(master) = role else {
                     break 'psync;
                 };

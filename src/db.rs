@@ -9,15 +9,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use crate::{rdb::Type, Rdb};
+use crate::Rdb;
 
 pub static DB: Lazy<Db> = Lazy::new(Db::new);
-
-#[derive(Clone)]
-pub struct Value {
-    pub inner: Bytes,
-    pub expiration: Option<SystemTime>,
-}
 
 pub struct Db {
     pub(crate) inner: RwLock<HashMap<String, Value>>,
@@ -30,9 +24,9 @@ impl Db {
         }
     }
 
-    pub fn set(&self, k: String, v: Bytes, exp: Option<Duration>) {
+    pub fn set(&self, k: String, t: Type, exp: Option<Duration>) {
         let value = Value {
-            inner: v,
+            v_type: t,
             expiration: exp.map(|x| SystemTime::now() + x),
         };
 
@@ -40,7 +34,7 @@ impl Db {
         self.inner.write().unwrap().insert(k, value);
     }
 
-    pub fn get(&self, k: &str) -> Option<Bytes> {
+    pub fn get(&self, k: &str) -> Option<Type> {
         // drops read lock
         let value = { self.inner.read().unwrap().get(k).cloned() };
 
@@ -55,7 +49,7 @@ impl Db {
                     Some(val)
                 }
             })
-            .map(|v| v.inner)
+            .map(|v| v.v_type)
     }
 
     pub fn multi_del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {
@@ -106,10 +100,8 @@ impl Db {
                 !expired
             })
             .for_each(|(key, value)| {
-                let Type::String(string) = value.v_type; // else
-                let value = Value {
-                    inner: string,
-                    expiration: value.expiration,
+                let Type::String(_) = &value.v_type else {
+                    todo!("{:?}", value.v_type);
                 };
                 lock.insert(key, value);
             });
@@ -117,15 +109,49 @@ impl Db {
     }
 }
 
+#[derive(Clone)]
+pub struct Value {
+    pub(crate) v_type: Type,
+    pub(crate) expiration: Option<SystemTime>,
+}
+
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Value")
-            .field("inner", &self.inner)
+            .field("type", &self.v_type)
             .field(
                 "expiration",
                 &self.expiration.map(chrono::DateTime::<chrono::Local>::from),
             )
             .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(u8)]
+pub enum Type {
+    String(Bytes) = 0,
+    // List,
+    // Set,
+    // SortedSet,
+    // Hash,
+    // Zipmap,
+    // Ziplist,
+    // Intset Encoding,
+    // Sorted Set in Ziplist Encoding,
+    // Hashmap in Ziplist Encoding,
+    // List in Quicklist Encoding,
+    Stream(/* TODO */ ()) = 21,
+}
+
+impl Type {
+    #[inline]
+    pub(crate) fn as_string(&self) -> Option<Bytes> {
+        #[allow(clippy::match_wildcard_for_single_variants)]
+        match self {
+            Self::String(string) => Some(string.clone()),
+            _ => None,
+        }
     }
 }
 
@@ -140,7 +166,7 @@ mod tests {
         let db = Db::new();
 
         let k: String = "test".into();
-        let v = b"bytes".as_ref().into();
+        let v = Type::String(b"bytes".as_ref().into());
         let px = Duration::from_millis(2_000);
         db.set(k.clone(), v, Some(px));
 
@@ -157,7 +183,7 @@ mod tests {
 
         keys.clone()
             .into_iter()
-            .for_each(|k| db.set(k, "test".into(), None));
+            .for_each(|k| db.set(k, Type::String("test".into()), None));
 
         assert_eq!(db.inner.read().unwrap().len(), 3);
         db.multi_del(std::iter::once(keys[0].clone()));

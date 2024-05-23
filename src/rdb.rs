@@ -8,6 +8,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::db::{Type, Value};
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub struct Rdb {
@@ -233,39 +235,6 @@ impl Db {
         tracing::debug!("Parsed entry: key: {key:?}; value: {value:?}");
         Ok((key, value))
     }
-}
-
-// TODO use the one from db.rs
-pub struct Value {
-    pub(crate) v_type: Type,
-    pub(crate) expiration: Option<SystemTime>,
-}
-
-impl Debug for Value {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Value")
-            .field("type", &self.v_type)
-            .field(
-                "expiration",
-                &self.expiration.map(chrono::DateTime::<chrono::Local>::from),
-            )
-            .finish()
-    }
-}
-
-#[derive(Debug)]
-pub enum Type {
-    String(Bytes),
-    // List,
-    // Set,
-    // SortedSet,
-    // Hash,
-    // Zipmap,
-    // Ziplist,
-    // Intset Encoding,
-    // Sorted Set in Ziplist Encoding,
-    // Hashmap in Ziplist Encoding,
-    // List in Quicklist Encoding,
 }
 
 impl Type {

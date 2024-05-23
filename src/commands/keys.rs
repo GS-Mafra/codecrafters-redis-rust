@@ -14,7 +14,7 @@ impl Keys {
         let pat = i
             .next()
             .context("Missing pattern")
-            .and_then(Resp::as_string)?;
+            .and_then(Resp::to_string)?;
         Ok(Self { pat })
     }
 

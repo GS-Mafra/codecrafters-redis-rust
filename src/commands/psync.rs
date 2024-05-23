@@ -16,7 +16,7 @@ impl Psync {
     }
 
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
-        let id = i.next().context("Expected id")?.as_string()?;
+        let id = i.next().context("Expected id")?.to_string()?;
         let offset = i.next().context("Expected offset")?.to_int()?;
         Ok(Self { id, offset })
     }

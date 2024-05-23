@@ -98,7 +98,7 @@ impl Resp {
         Ok(())
     }
 
-    pub(crate) fn as_string(&self) -> anyhow::Result<String> {
+    pub(crate) fn to_string(&self) -> anyhow::Result<String> {
         match self {
             Self::Bulk(resp) => String::from_utf8(resp.to_vec()).context("Invalid String"),
             Self::Simple(resp) => Ok(resp.clone()),
@@ -106,11 +106,20 @@ impl Resp {
         }
     }
 
-    pub(crate) fn as_bytes(&self) -> anyhow::Result<Bytes> {
+    pub(crate) fn to_bytes(&self) -> anyhow::Result<Bytes> {
         Ok(match self {
             Self::Bulk(inner) => inner.clone(),
             Self::Simple(inner) => Bytes::copy_from_slice(inner.as_bytes()),
             resp => bail!("Not valid RESP for bytes {resp:?}"),
+        })
+    }
+
+    pub(crate) fn to_int<T: FromRadix10SignedChecked>(&self) -> anyhow::Result<T> {
+        Ok(match self {
+            Self::Bulk(resp) => slice_to_int(resp)?,
+            Self::Simple(resp) => slice_to_int(resp.as_bytes())?,
+            // Self::Integer(resp) => *resp,
+            resp => bail!("Not valid RESP for a int {resp:?}"),
         })
     }
 
@@ -136,15 +145,6 @@ impl Resp {
             Self::Simple(inner) => Some(inner),
             _ => None,
         }
-    }
-
-    pub(crate) fn to_int<T: FromRadix10SignedChecked>(&self) -> anyhow::Result<T> {
-        Ok(match self {
-            Self::Bulk(resp) => slice_to_int(resp)?,
-            Self::Simple(resp) => slice_to_int(resp.as_bytes())?,
-            // Self::Integer(resp) => *resp,
-            resp => bail!("Not valid RESP for a int {resp:?}"),
-        })
     }
 
     #[inline]

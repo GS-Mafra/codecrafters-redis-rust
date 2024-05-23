@@ -23,7 +23,7 @@ impl ReplConf {
                 Self::ListeningPort(port)
             }
             b"capa" => {
-                let capas = i.next().context("Missing capa")?.as_bytes()?;
+                let capas = i.next().context("Missing capa")?.to_bytes()?;
                 Self::Capa(capas)
             }
             b"getack" => {

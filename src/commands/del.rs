@@ -9,7 +9,7 @@ pub struct Del {
 impl Del {
     pub(super) fn parse(i: IterResp) -> Self {
         Self {
-            keys: i.flat_map(Resp::as_string).collect(),
+            keys: i.flat_map(Resp::to_string).collect(),
         }
     }
 
@@ -18,7 +18,7 @@ impl Del {
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let deleted = DB.multi_del(self.keys.iter());
+        let deleted = Self::apply(self);
         let resp = Resp::Integer(i64::try_from(deleted)?);
         handler.write(&resp).await?;
         Ok(())

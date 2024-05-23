@@ -31,6 +31,9 @@ pub use config::Config;
 mod keys;
 pub use keys::Keys;
 
+mod r#type;
+pub use r#type::Type;
+
 use anyhow::bail;
 
 use crate::Resp;
@@ -49,6 +52,7 @@ pub enum Command {
     Psync(Psync),
     Config(Config),
     Keys(Keys),
+    Type(Type),
 }
 
 impl Command {
@@ -74,6 +78,7 @@ impl Command {
             b"psync" => Self::Psync(Psync::parse(values)?),
             b"config" => Self::Config(Config::parse(values)?),
             b"keys" => Self::Keys(Keys::parse(values)?),
+            b"type" => Self::Type(Type::parse(values)?),
             _ => unimplemented!("{command:?}"),
         };
         Ok((parsed_cmd, raw_cmd))
