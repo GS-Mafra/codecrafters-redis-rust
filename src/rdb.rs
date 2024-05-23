@@ -14,6 +14,7 @@ pub struct Rdb {
     version: u32,
     aux_fields: AuxFields,
     pub(crate) db: Db,
+    checksum: Bytes,
 }
 
 impl Rdb {
@@ -33,13 +34,14 @@ impl Rdb {
         tracing::debug!("Parsed db: {db:#?}");
 
         ensure!(bytes.get_u8() == 0xff, "End of RDB");
-        let _checksum = bytes.split_to(8);
+        let checksum = bytes.split_to(8);
         ensure!(bytes.is_empty());
 
         let rdb = Self {
             version,
             aux_fields,
             db,
+            checksum,
         };
         tracing::info!("Parsed rdb: {rdb:#?}");
         Ok(rdb)

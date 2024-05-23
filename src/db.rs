@@ -65,7 +65,13 @@ impl Db {
     }
 
     pub fn load_rdb(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let rdb = std::fs::read(path)?;
+        let rdb = match std::fs::read(path) {
+            Ok(rdb) => rdb,
+            Err(e) => match e.kind() {
+                std::io::ErrorKind::NotFound => return Ok(()),
+                _ => return Err(e.into()),
+            },
+        };
         let rdb = Rdb::parse(rdb.into())?;
         self.apply_rdb(rdb);
         Ok(())
