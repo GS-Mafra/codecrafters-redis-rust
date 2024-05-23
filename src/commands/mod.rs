@@ -28,15 +28,18 @@ pub use psync::Psync;
 mod config;
 pub use config::Config;
 
+mod keys;
+pub use keys::Keys;
+
 use anyhow::bail;
 
 use crate::Resp;
 
 type IterResp<'a> = std::slice::Iter<'a, Resp>;
 
-pub enum Command<'a> {
+pub enum Command {
     Ping(Ping),
-    Echo(Echo<'a>),
+    Echo(Echo),
     Get(Get),
     Set(Set),
     Del(Del),
@@ -44,11 +47,12 @@ pub enum Command<'a> {
     ReplConf(ReplConf),
     Wait(Wait),
     Psync(Psync),
-    Config(Config<'a>),
+    Config(Config),
+    Keys(Keys),
 }
 
-impl<'a> Command<'a> {
-    pub fn parse(resp: &'a Resp) -> anyhow::Result<(Self, &'a [Resp])> {
+impl Command {
+    pub fn parse(resp: &Resp) -> anyhow::Result<(Self, &[Resp])> {
         let Some(raw_cmd) = resp.as_array() else {
             bail!("Unsupported RESP for command");
         };
@@ -69,6 +73,7 @@ impl<'a> Command<'a> {
             b"wait" => Self::Wait(Wait::parse(values)?),
             b"psync" => Self::Psync(Psync::parse(values)?),
             b"config" => Self::Config(Config::parse(values)?),
+            b"keys" => Self::Keys(Keys::parse(values)?),
             _ => unimplemented!("{command:?}"),
         };
         Ok((parsed_cmd, raw_cmd))

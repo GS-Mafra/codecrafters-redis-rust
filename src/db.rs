@@ -2,21 +2,24 @@ use bytes::Bytes;
 use once_cell::sync::Lazy;
 use std::{
     collections::HashMap,
+    fmt::Debug,
+    path::Path,
     sync::RwLock,
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
+
+use crate::{rdb::Type, Rdb};
 
 pub static DB: Lazy<Db> = Lazy::new(Db::new);
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Value {
     pub inner: Bytes,
-    pub created: Instant,
-    pub expiration: Option<Duration>,
+    pub expiration: Option<SystemTime>,
 }
 
 pub struct Db {
-    inner: RwLock<HashMap<String, Value>>,
+    pub(crate) inner: RwLock<HashMap<String, Value>>,
 }
 
 impl Db {
@@ -26,11 +29,10 @@ impl Db {
         }
     }
 
-    pub fn set(&self, k: String, v: Bytes, px: Option<Duration>) {
+    pub fn set(&self, k: String, v: Bytes, exp: Option<Duration>) {
         let value = Value {
             inner: v,
-            created: Instant::now(),
-            expiration: px,
+            expiration: exp.map(|x| SystemTime::now() + x),
         };
 
         tracing::debug!("Adding to db: \"{k}\": {:#?}", value);
@@ -43,14 +45,10 @@ impl Db {
 
         value
             .and_then(|val| {
-                let expired = val.expiration.is_some_and(|exp| {
-                    let time_passed = val.created.elapsed();
-                    tracing::info!("\"{k}\": {time_passed:.02?} passed out of {exp:.02?}");
-                    exp <= time_passed
-                });
+                let expired = val.expiration.is_some_and(|exp| exp <= SystemTime::now());
                 if expired {
                     tracing::info!("\"{k}\" expired");
-                    self.del(k);
+                    self.multi_del(std::iter::once(k));
                     None
                 } else {
                     Some(val)
@@ -59,16 +57,54 @@ impl Db {
             .map(|v| v.inner)
     }
 
-    fn del(&self, k: &str) {
-        tracing::info!("Deleting: \"{k}\"");
-        self.inner.write().unwrap().remove(k);
-    }
-
     pub fn multi_del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {
         let mut lock = self.inner.write().unwrap();
         keys.filter_map(|k| lock.remove(k.as_ref()).map(|_| k))
             .inspect(|k| tracing::info!("Deleted: \"{}\"", k.as_ref()))
             .count()
+    }
+
+    pub fn load_rdb(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let rdb = std::fs::read(path)?;
+        let rdb = Rdb::parse(rdb.into())?;
+        self.apply_rdb(rdb);
+        Ok(())
+    }
+
+    pub fn apply_rdb(&self, rdb: Rdb) {
+        let mut lock = self.inner.write().unwrap();
+        rdb.db
+            .maps
+            .into_iter()
+            .flatten()
+            .filter(|(key, v)| {
+                let expired = v.expiration.is_some_and(|exp| exp <= SystemTime::now());
+                if expired {
+                    tracing::info!("key: \"{key}\" from rdb expired");
+                }
+                !expired
+            })
+            .for_each(|(key, value)| {
+                let Type::String(string) = value.v_type; // else
+                let value = Value {
+                    inner: string,
+                    expiration: value.expiration,
+                };
+                lock.insert(key, value);
+            });
+        tracing::debug!("Applied rdb: {lock:#?}");
+    }
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Value")
+            .field("inner", &self.inner)
+            .field(
+                "expiration",
+                &self.expiration.map(chrono::DateTime::<chrono::Local>::from),
+            )
+            .finish()
     }
 }
 
@@ -103,7 +139,7 @@ mod tests {
             .for_each(|k| db.set(k, "test".into(), None));
 
         assert_eq!(db.inner.read().unwrap().len(), 3);
-        db.del(&keys[0]);
+        db.multi_del(std::iter::once(keys[0].clone()));
         assert_eq!(db.inner.read().unwrap().len(), 2);
         assert_eq!(db.multi_del(keys[1..=2].iter()), 2);
     }

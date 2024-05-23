@@ -14,9 +14,8 @@ impl Ping {
     }
 
     pub(super) fn parse(mut i: IterResp) -> Self {
-        Self {
-            msg: i.next().and_then(|x| Resp::as_bytes(x).ok()),
-        }
+        let msg = i.next().and_then(Resp::as_bulk).cloned();
+        Self { msg }
     }
 
     pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {

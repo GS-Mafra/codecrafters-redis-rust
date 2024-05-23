@@ -1,20 +1,25 @@
-use anyhow::{bail, Context};
+use anyhow::anyhow;
 use bytes::Bytes;
 
 use crate::{Handler, Resp};
 
 use super::IterResp;
 
-pub struct Echo<'a> {
-    msg: &'a Bytes,
+pub struct Echo {
+    msg: Bytes,
 }
 
-impl<'a> Echo<'a> {
-    pub(super) fn parse(mut i: IterResp<'a>) -> anyhow::Result<Self> {
-        let Some(msg) = i.next().context("Missing echo value")?.as_bulk() else {
-            bail!("Expected bulk string");
-        };
-        Ok(Self { msg })
+impl Echo {
+    fn new(msg: Bytes) -> Self {
+        Self { msg }
+    }
+
+    pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
+        i.next()
+            .and_then(Resp::as_bulk)
+            .cloned()
+            .map(Self::new)
+            .ok_or_else(|| anyhow!("Expected bulk string"))
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {

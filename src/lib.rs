@@ -16,4 +16,7 @@ mod resp;
 pub use resp::Resp;
 
 mod db;
-pub(crate) use db::DB;
+pub use db::DB;
+
+mod rdb;
+pub use rdb::Rdb;

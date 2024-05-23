@@ -9,7 +9,7 @@ use tokio::net::TcpStream;
 
 use crate::{
     commands::{Ping, Psync, ReplConf},
-    Command, Handler, Resp,
+    Command, Handler, Rdb, Resp, DB,
 };
 
 #[derive(Debug)]
@@ -104,13 +104,13 @@ impl Slave {
             handler.read_bytes().await?;
         }
 
-        // TODO do something with the rdb
-        let _rdb = {
+        let rdb = {
             let mut cur = Cursor::new(handler.buf.as_ref());
             let rdb = Resp::parse_rdb(&mut cur)?;
             handler.buf.advance(cur.position().try_into()?);
-            rdb
+            Rdb::parse(rdb)?
         };
+        DB.apply_rdb(rdb);
 
         Ok(handler)
     }

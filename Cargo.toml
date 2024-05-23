@@ -32,9 +32,12 @@ hex = "0.4.3"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracing-appender = "0.2.3"
+glob-match = "0.2.1"
+chrono = "0.4.38"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+tracing-test = "0.2.4"
 
 [lints.clippy]
 pedantic = "deny"
