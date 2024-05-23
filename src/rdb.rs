@@ -175,26 +175,24 @@ impl Db {
 
             ensure!(bytes.get_u8() == Self::RESIZEDB);
 
-            let size = Self::parse_size(bytes);
-            let mut map = HashMap::with_capacity(size as usize);
-
-            for _ in 0..size {
-                Self::parse_entry(bytes, &mut map)?;
-            }
+            let (db_size, _exp_size) = Self::parse_size(bytes);
+            let map = (0..db_size)
+                .map(|_| Self::parse_entry(bytes))
+                .collect::<anyhow::Result<HashMap<_, _>>>()?;
             maps.push(map);
         }
         Ok(Self { maps })
     }
 
-    fn parse_size(bytes: &mut Bytes) -> u32 {
+    fn parse_size(bytes: &mut Bytes) -> (u32, u32) {
         let (db, _) = Rdb::parse_len(bytes);
         tracing::trace!("db size: {db:?}");
         let (exp, _) = Rdb::parse_len(bytes);
         tracing::trace!("expiry size: {exp:?}");
-        db
+        (db, exp)
     }
 
-    fn parse_entry(bytes: &mut Bytes, map: &mut HashMap<String, Value>) -> anyhow::Result<()> {
+    fn parse_entry(bytes: &mut Bytes) -> anyhow::Result<(String, Value)> {
         let expiration: Option<SystemTime>;
         let flag: u8;
 
@@ -229,8 +227,7 @@ impl Db {
             (key, value)
         };
         tracing::debug!("Parsed entry: key: {key:?}; value: {value:?}");
-        map.insert(key, value);
-        Ok(())
+        Ok((key, value))
     }
 }
 

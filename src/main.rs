@@ -47,7 +47,7 @@ fn load_rdb() -> anyhow::Result<()> {
         .dir
         .as_ref()
         .zip(ARGUMENTS.db_filename.as_ref())
-        .map(|(dir, name)| dir.with_file_name(name))
+        .map(|(dir, name)| dir.join(name))
         .map_or(Ok(()), |rdb_path| DB.load_rdb(rdb_path))
 }
 

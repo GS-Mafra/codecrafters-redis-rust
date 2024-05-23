@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use once_cell::sync::Lazy;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt::Debug,
     path::Path,
@@ -66,7 +67,17 @@ impl Db {
 
     pub fn load_rdb(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let path = path.as_ref();
-        let rdb = match std::fs::read(path) {
+
+        // FIXME windows doesn't like /tmp :(
+        let path = if path.starts_with("/tmp/") {
+            let mut tmp = std::env::temp_dir();
+            tmp.extend(path.components().skip(2));
+            Cow::Owned(tmp)
+        } else {
+            Cow::Borrowed(path)
+        };
+
+        let rdb = match std::fs::read(&path) {
             Ok(rdb) => rdb,
             Err(e) => match e.kind() {
                 std::io::ErrorKind::NotFound => {
