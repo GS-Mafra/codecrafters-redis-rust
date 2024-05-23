@@ -65,10 +65,14 @@ impl Db {
     }
 
     pub fn load_rdb(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+        let path = path.as_ref();
         let rdb = match std::fs::read(path) {
             Ok(rdb) => rdb,
             Err(e) => match e.kind() {
-                std::io::ErrorKind::NotFound => return Ok(()),
+                std::io::ErrorKind::NotFound => {
+                    tracing::error!("File not found: {}", path.display());
+                    return Ok(());
+                }
                 _ => return Err(e.into()),
             },
         };
