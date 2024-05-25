@@ -5,6 +5,7 @@ use crate::{Handler, Resp, DB};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Keys {
     pat: String,
 }
@@ -22,7 +23,6 @@ impl Keys {
         let keys = DB
             .inner
             .read()
-            .unwrap()
             .keys()
             .filter(|x| glob_match(&self.pat, x))
             .cloned()

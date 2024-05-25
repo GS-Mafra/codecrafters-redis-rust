@@ -64,6 +64,9 @@ impl Slave {
                 Command::Del(del) => {
                     del.apply();
                 }
+                Command::Xadd(xadd) => {
+                    let _ = xadd.apply();
+                }
                 Command::ReplConf(replconf) => {
                     replconf.apply_and_respond_slave(&mut handler, self).await?;
                 }

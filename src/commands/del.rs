@@ -2,6 +2,7 @@ use crate::{Handler, Resp, DB};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Del {
     keys: Vec<String>,
 }
@@ -14,7 +15,7 @@ impl Del {
     }
 
     pub fn apply(&self) -> usize {
-        DB.multi_del(self.keys.iter())
+        DB.del(self.keys.iter())
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {

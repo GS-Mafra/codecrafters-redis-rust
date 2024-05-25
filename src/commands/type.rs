@@ -4,6 +4,7 @@ use crate::{db::Type as DbType, Handler, Resp, DB};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Type {
     key: String,
 }
@@ -18,7 +19,6 @@ impl Type {
         let ty = DB
             .inner
             .read()
-            .unwrap()
             .get(&self.key)
             .map_or("none", |v| match v.v_type {
                 DbType::String(_) => "string",

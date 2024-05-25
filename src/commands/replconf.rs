@@ -5,6 +5,7 @@ use crate::{Handler, Resp, Slave};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub enum ReplConf {
     ListeningPort(u16),
     Capa(Bytes),

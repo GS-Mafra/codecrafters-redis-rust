@@ -51,6 +51,9 @@ impl Master {
         let len = if incr_offset { resp.len() } else { 0 };
 
         let mut lock = self.slaves.write().await;
+        if lock.is_empty() {
+            return;
+        }
         let mut to_retain = Vec::<bool>::with_capacity(lock.len());
         for slave in &mut *lock {
             let retain = !slave

@@ -8,7 +8,7 @@ mod get;
 pub use get::Get;
 
 mod set;
-use set::Set;
+pub use set::Set;
 
 mod del;
 pub use del::Del;
@@ -34,12 +34,16 @@ pub use keys::Keys;
 mod r#type;
 pub use r#type::Type;
 
+mod xadd;
+pub use xadd::Xadd;
+
 use anyhow::bail;
 
 use crate::Resp;
 
 type IterResp<'a> = std::slice::Iter<'a, Resp>;
 
+#[derive(Debug)]
 pub enum Command {
     Ping(Ping),
     Echo(Echo),
@@ -53,6 +57,7 @@ pub enum Command {
     Config(Config),
     Keys(Keys),
     Type(Type),
+    Xadd(Xadd),
 }
 
 impl Command {
@@ -79,8 +84,10 @@ impl Command {
             b"config" => Self::Config(Config::parse(values)?),
             b"keys" => Self::Keys(Keys::parse(values)?),
             b"type" => Self::Type(Type::parse(values)?),
+            b"xadd" => Self::Xadd(Xadd::parse(values)?),
             _ => unimplemented!("{command:?}"),
         };
+        tracing::debug!("Parsed command: {parsed_cmd:#?}");
         Ok((parsed_cmd, raw_cmd))
     }
 }

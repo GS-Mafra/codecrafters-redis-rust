@@ -15,6 +15,7 @@ pub enum Error {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Resp {
     Simple(String),
+    Err(String),
     Bulk(Bytes),
     Array(Vec<Self>),
     Integer(i64),
@@ -163,7 +164,7 @@ impl Resp {
         let int_len = |int: usize| int.checked_ilog10().unwrap_or(0) as usize + 1;
 
         match self {
-            Self::Simple(inner) => len += inner.len() + Self::CRLF_LEN,
+            Self::Simple(inner) | Self::Err(inner) => len += inner.len() + Self::CRLF_LEN,
             Self::Bulk(inner) => {
                 len += int_len(inner.len()) + Self::CRLF_LEN + inner.len() + Self::CRLF_LEN;
             }

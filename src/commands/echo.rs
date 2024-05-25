@@ -5,6 +5,7 @@ use crate::{Handler, Resp};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Echo {
     msg: Bytes,
 }

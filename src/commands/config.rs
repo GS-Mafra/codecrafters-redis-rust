@@ -5,6 +5,7 @@ use crate::{Handler, Resp, ARGUMENTS};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub enum Config {
     Get(Vec<Bytes>),
     // TODO

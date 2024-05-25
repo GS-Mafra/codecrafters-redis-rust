@@ -5,6 +5,7 @@ use crate::{Handler, Master, Resp};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Psync {
     id: String,
     offset: i64,

@@ -6,6 +6,7 @@ use crate::{Command, Handler, Resp, Role};
 
 use super::{IterResp, ReplConf};
 
+#[derive(Debug)]
 pub struct Wait {
     min_slaves: i64,
     timeout: Duration,

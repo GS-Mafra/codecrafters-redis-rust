@@ -4,6 +4,7 @@ use crate::{Handler, Resp};
 
 use super::IterResp;
 
+#[derive(Debug)]
 pub struct Ping {
     msg: Option<Bytes>,
 }
