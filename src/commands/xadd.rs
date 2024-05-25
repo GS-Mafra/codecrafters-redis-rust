@@ -30,6 +30,7 @@ impl Xadd {
             .map(|(ms_time, sq_num)| {
                 let ms_time = Duration::from_millis(ms_time.parse::<u64>()?);
                 let sq_num = sq_num.parse::<u64>()?;
+                ensure!(sq_num > 0, "ERR The ID specified in XADD must be greater than 0-0");
                 let entry_id = EntryId::new(ms_time, sq_num);
                 anyhow::Ok(entry_id)
             })
