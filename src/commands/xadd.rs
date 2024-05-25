@@ -35,7 +35,7 @@ impl Xadd {
                     } else {
                         let sq_num = sq_num.parse::<u64>()?;
                         ensure!(
-                            (time > 0 && sq_num > 0),
+                            sq_num > 0,
                             "ERR The ID specified in XADD must be greater than 0-0"
                         );
                         MaybeAuto::Set((ms_time, sq_num))
