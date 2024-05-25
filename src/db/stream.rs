@@ -1,11 +1,10 @@
+use anyhow::bail;
+use bytes::Bytes;
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Display,
-    time::Duration,
+    time::{Duration, UNIX_EPOCH},
 };
-
-use anyhow::bail;
-use bytes::Bytes;
 
 type StreamInner = BTreeMap<EntryId, StreamValues>;
 type StreamValues = HashMap<String, Bytes>;
@@ -16,22 +15,18 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(id: EntryId, values: StreamValues) -> Self {
-        let mut inner = BTreeMap::new();
-        inner.insert(id, values);
+    const SMALL_EQ: &'static str =
+        "ERR The ID specified in XADD is equal or smaller than the target stream top item";
+
+    pub(crate) const fn new() -> Self {
+        let inner = BTreeMap::new();
         Self { inner }
     }
 
-    pub(super) fn xadd(&mut self, id: EntryId, values: StreamValues) -> anyhow::Result<()> {
-        let last_entry = self.inner.last_entry();
-        if last_entry.is_some_and(|entry| id <= *entry.key()) {
-            bail!(
-                "ERR The ID specified in XADD is equal or smaller than the target stream top item"
-            );
-        }
-
+    pub(super) fn xadd(&mut self, id: EntryId, values: StreamValues) -> String {
+        let id_res = id.to_string();
         self.inner.insert(id, values);
-        Ok(())
+        id_res
     }
 }
 
@@ -55,5 +50,59 @@ impl Display for EntryId {
             ms_time = self.ms_time.as_millis(),
             sq_num = self.sq_num
         )
+    }
+}
+
+#[derive(Debug)]
+pub enum MaybeAuto {
+    Auto,
+    AutoSeq(Duration),
+    Set((Duration, u64)),
+}
+
+impl MaybeAuto {
+    pub(crate) fn auto_generate(self, stream: &Stream) -> anyhow::Result<EntryId> {
+        let last_entry = stream.inner.last_key_value();
+
+        let res = match self {
+            Self::Set((ms_time, sq_num)) => {
+                let entry_id = EntryId::new(ms_time, sq_num);
+                if last_entry.is_some_and(|(key, _)| entry_id <= *key) {
+                    bail!(Stream::SMALL_EQ);
+                }
+                entry_id
+            }
+            Self::AutoSeq(ms_time) => {
+                use std::cmp::Ordering::{Equal, Greater, Less};
+
+                let sq_num = last_entry
+                    .map_or(Ok(0), |(key, _)| match ms_time.cmp(&key.ms_time) {
+                        Less => bail!(Stream::SMALL_EQ),
+                        Equal => Ok(key.sq_num + 1),
+                        Greater => Ok(0),
+                    })
+                    .map(|mut num| {
+                        if ms_time.as_millis() == 0 && num == 0 {
+                            num = 1;
+                        }
+                        num
+                    })?;
+
+                EntryId::new(ms_time, sq_num)
+            }
+            Self::Auto => {
+                let ms_time = UNIX_EPOCH.elapsed()?;
+                let sq_num = last_entry.map_or(0, |(last_key, _)| {
+                    if last_key.ms_time == ms_time {
+                        last_key.sq_num + 1
+                    } else {
+                        0
+                    }
+                });
+
+                EntryId::new(ms_time, sq_num)
+            }
+        };
+        Ok(res)
     }
 }

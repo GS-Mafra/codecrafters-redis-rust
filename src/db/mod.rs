@@ -38,25 +38,29 @@ impl Db {
         self.inner.write().insert(set.key, value);
     }
 
-    pub fn xadd(&self, xadd: crate::commands::Xadd) -> anyhow::Result<()> {
+    pub fn xadd(&self, xadd: crate::commands::Xadd) -> anyhow::Result<String> {
         let mut lock = self.inner.write();
         let entry = lock.entry(xadd.key);
 
-        match entry {
+        let res = match entry {
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
                 let Type::Stream(stream) = &mut entry.v_type else {
                     bail!("XADD on invalid key");
                 };
-                stream.xadd(xadd.id, xadd.k_v)?;
+                let id = xadd.id.auto_generate(stream)?;
+                stream.xadd(id, xadd.k_v)
             }
             Entry::Vacant(entry) => {
-                let stream = Stream::new(xadd.id, xadd.k_v);
+                let mut stream = Stream::new();
+                let id = xadd.id.auto_generate(&stream)?;
+                let res = stream.xadd(id, xadd.k_v);
                 entry.insert(Value::new(Type::Stream(stream), None));
+                res
             }
         };
         drop(lock);
-        Ok(())
+        Ok(res)
     }
 
     pub fn del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {

@@ -2,40 +2,51 @@ use anyhow::{bail, ensure, Context};
 use bytes::Bytes;
 use std::{collections::HashMap, str::from_utf8 as str_utf8, time::Duration};
 
-use crate::{db::stream::EntryId, Handler, Resp, DB};
+use crate::{db::stream::MaybeAuto, Handler, Resp, DB};
 
 use super::IterResp;
 
 #[derive(Debug)]
 pub struct Xadd {
     pub(crate) key: String,
-    pub(crate) id: EntryId,
+    pub(crate) id: MaybeAuto,
     pub(crate) k_v: HashMap<String, Bytes>,
 }
 
 impl Xadd {
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
         let key = i.next().context("Missing key")?.to_string()?;
-        let id = i
-            .next()
-            .context("Missing id")?
-            .as_bulk()
-            .map(|id| str_utf8(id))
-            .transpose()?
-            .map(|id| {
-                id.rsplit_once('-')
-                    .context("Invalid format for key: <millisecondsTime>-<sequenceNumber>")
-            })
-            .transpose()?
-            .map(|(ms_time, sq_num)| {
-                let ms_time = Duration::from_millis(ms_time.parse::<u64>()?);
-                let sq_num = sq_num.parse::<u64>()?;
-                ensure!(sq_num > 0, "ERR The ID specified in XADD must be greater than 0-0");
-                let entry_id = EntryId::new(ms_time, sq_num);
-                anyhow::Ok(entry_id)
-            })
-            .transpose()?
-            .context("Invalid value for id")?;
+
+        let id = {
+            let id = i
+                .next()
+                .context("Missing id")?
+                .as_bulk()
+                .map(|id| str_utf8(id))
+                .transpose()?
+                .context("Invalid value for id")?;
+
+            match id.rsplit_once('-') {
+                Some((ms_time, sq_num)) => {
+                    let time = ms_time.parse::<u64>()?;
+                    let ms_time = Duration::from_millis(time);
+                    if sq_num == "*" {
+                        MaybeAuto::AutoSeq(ms_time)
+                    } else {
+                        let sq_num = sq_num.parse::<u64>()?;
+                        ensure!(
+                            (time > 0 && sq_num > 0),
+                            "ERR The ID specified in XADD must be greater than 0-0"
+                        );
+                        MaybeAuto::Set((ms_time, sq_num))
+                    }
+                }
+                None if id.eq("*") => MaybeAuto::Auto,
+                None => {
+                    bail!("Invalid format for id: <millisecondsTime>-<sequenceNumber> or *")
+                }
+            }
+        };
 
         let mut k_v = HashMap::new();
         while let Some(key) = i.next() {
@@ -56,13 +67,12 @@ impl Xadd {
     }
 
     #[inline]
-    pub fn apply(self) -> anyhow::Result<()> {
+    pub fn apply(self) -> anyhow::Result<String> {
         DB.xadd(self)
     }
 
     pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        let resp = Resp::bulk(self.id.to_string());
-        Self::apply(self)?;
+        let resp = Resp::bulk(self.apply()?);
         handler.write(&resp).await?;
         Ok(())
     }

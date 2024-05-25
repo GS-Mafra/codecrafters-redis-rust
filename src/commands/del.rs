@@ -19,7 +19,7 @@ impl Del {
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let deleted = Self::apply(self);
+        let deleted = self.apply();
         let resp = Resp::Integer(i64::try_from(deleted)?);
         handler.write(&resp).await?;
         Ok(())

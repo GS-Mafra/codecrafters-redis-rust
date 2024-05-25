@@ -45,7 +45,7 @@ impl Set {
     }
 
     pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        Self::apply(self);
+        self.apply();
         handler.write(&Resp::simple("OK")).await?;
         Ok(())
     }

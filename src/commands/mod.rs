@@ -34,7 +34,7 @@ pub use keys::Keys;
 mod r#type;
 pub use r#type::Type;
 
-mod xadd;
+pub mod xadd;
 pub use xadd::Xadd;
 
 use anyhow::bail;
