@@ -125,7 +125,8 @@ impl Handler {
 
 pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Result<()> {
     use Command::{
-        Config, Del, Echo, Get, Info, Keys, Ping, Psync, ReplConf, Set, Type, Wait, Xadd, Xrange
+        Config, Del, Echo, Get, Info, Keys, Ping, Psync, ReplConf, Set, Type, Wait, Xadd, Xrange,
+        Xread,
     };
 
     loop {
@@ -167,6 +168,7 @@ pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Res
             Keys(keys) => keys.apply_and_respond(&mut handler).await,
             Type(r#type) => r#type.apply_and_respond(&mut handler).await,
             Xrange(xrange) => xrange.apply_and_respond(&mut handler).await,
+            Xread(xread) => xread.apply_and_respond(&mut handler).await,
             Psync(psync) => 'psync: {
                 let Role::Master(master) = role else {
                     break 'psync Ok(());

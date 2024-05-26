@@ -5,6 +5,8 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
+use crate::Resp;
+
 type StreamInner = BTreeMap<EntryId, StreamValues>;
 type StreamValues = Vec<(String, String)>;
 
@@ -27,6 +29,30 @@ impl Stream {
         self.inner.insert(id, values);
         id_res
     }
+
+    pub(crate) fn format_entries<'a, I>(entries: I) -> Vec<Resp>
+    where
+        I: Iterator<Item = (&'a EntryId, &'a StreamValues)>,
+    {
+        entries.fold(Vec::new(), |mut acc, (id, key_values)| {
+            let mut values = Vec::with_capacity(2);
+            values.push(Resp::bulk(id.to_string()));
+
+            let k_v = key_values.iter().fold(
+                Vec::with_capacity(key_values.len() * 2),
+                |mut acc, (key, value)| {
+                    acc.push(Resp::bulk(key.clone()));
+                    acc.push(Resp::bulk(value.clone()));
+                    acc
+                },
+            );
+
+            values.push(Resp::Array(k_v));
+
+            acc.push(Resp::Array(values));
+            acc
+        })
+    }
 }
 
 #[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
@@ -41,6 +67,18 @@ impl EntryId {
 
     pub const fn new(ms_time: Duration, sq_num: u64) -> Self {
         Self { ms_time, sq_num }
+    }
+
+    pub(crate) fn split_or_seq(sq_num: u64, id: &str) -> anyhow::Result<Self> {
+        let res = if let Some((ms_time, sq_num)) = id.rsplit_once('-') {
+            let ms_time = Duration::from_millis(ms_time.parse::<u64>()?);
+            let sq_num = sq_num.parse::<u64>()?;
+            Self::new(ms_time, sq_num)
+        } else {
+            let ms_time = Duration::from_millis(id.parse::<u64>()?);
+            Self::new(ms_time, sq_num)
+        };
+        Ok(res)
     }
 }
 

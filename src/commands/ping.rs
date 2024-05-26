@@ -26,8 +26,7 @@ impl Ping {
     }
 
     pub(crate) fn into_resp(self) -> Resp {
-        let mut v = Vec::new();
-        v.push(Resp::bulk("PING"));
+        let mut v = vec![Resp::bulk("PING")];
         if let Some(msg) = self.msg {
             v.push(Resp::Bulk(msg));
         }
