@@ -36,6 +36,9 @@ pub struct EntryId {
 }
 
 impl EntryId {
+    pub const MIN: Self = Self::new(Duration::from_millis(u64::MIN), u64::MIN);
+    pub const MAX: Self = Self::new(Duration::from_millis(u64::MAX), u64::MAX);
+
     pub const fn new(ms_time: Duration, sq_num: u64) -> Self {
         Self { ms_time, sq_num }
     }

@@ -63,6 +63,13 @@ fn to_entry_id(resp: &Resp, start: bool) -> anyhow::Result<EntryId> {
         .map(|id| str_utf8(id))
         .transpose()?
         .map(|x| {
+            if x == "-" && start {
+                return Ok(EntryId::MIN);
+            }
+            else if x == "+" && !start {
+                return Ok(EntryId::MAX)
+            }
+
             if let Some((ms_time, sq_num)) = x.rsplit_once('-') {
                 let ms_time = Duration::from_millis(ms_time.parse::<u64>()?);
                 let sq_num = sq_num.parse::<u64>()?;
