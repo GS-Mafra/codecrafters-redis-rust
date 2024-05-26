@@ -39,13 +39,17 @@ impl Xrange {
             .map(|stream| stream.inner.range(self.range.start()..=self.range.end()))
             .map_or_else(Vec::new, |values| {
                 values.fold(Vec::new(), |mut acc, (id, key_values)| {
-                    let mut values = vec![Resp::bulk(id.to_string())];
+                    let mut values = Vec::with_capacity(2);
+                    values.push(Resp::bulk(id.to_string()));
 
-                    let k_v = key_values.iter().fold(Vec::new(), |mut acc, (key, value)| {
-                        acc.push(Resp::bulk(key.clone()));
-                        acc.push(Resp::bulk(value.clone()));
-                        acc
-                    });
+                    let k_v = key_values.iter().fold(
+                        Vec::with_capacity(key_values.len() * 2),
+                        |mut acc, (key, value)| {
+                            acc.push(Resp::bulk(key.clone()));
+                            acc.push(Resp::bulk(value.clone()));
+                            acc
+                        },
+                    );
 
                     values.push(Resp::Array(k_v));
 
@@ -65,9 +69,8 @@ fn to_entry_id(resp: &Resp, start: bool) -> anyhow::Result<EntryId> {
         .map(|x| {
             if x == "-" && start {
                 return Ok(EntryId::MIN);
-            }
-            else if x == "+" && !start {
-                return Ok(EntryId::MAX)
+            } else if x == "+" && !start {
+                return Ok(EntryId::MAX);
             }
 
             if let Some((ms_time, sq_num)) = x.rsplit_once('-') {
