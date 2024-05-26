@@ -37,6 +37,9 @@ pub use r#type::Type;
 mod xadd;
 pub use xadd::Xadd;
 
+mod xrange;
+pub use xrange::Xrange;
+
 use anyhow::bail;
 
 use crate::Resp;
@@ -58,6 +61,7 @@ pub enum Command {
     Keys(Keys),
     Type(Type),
     Xadd(Xadd),
+    Xrange(Xrange),
 }
 
 impl Command {
@@ -85,6 +89,7 @@ impl Command {
             b"keys" => Self::Keys(Keys::parse(values)?),
             b"type" => Self::Type(Type::parse(values)?),
             b"xadd" => Self::Xadd(Xadd::parse(values)?),
+            b"xrange" => Self::Xrange(Xrange::parse(values)?),
             _ => unimplemented!("{command:?}"),
         };
         tracing::debug!("Parsed command: {parsed_cmd:#?}");

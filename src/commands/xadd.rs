@@ -1,6 +1,5 @@
 use anyhow::{bail, ensure, Context};
-use bytes::Bytes;
-use std::{collections::HashMap, str::from_utf8 as str_utf8, time::Duration};
+use std::{str::from_utf8 as str_utf8, time::Duration};
 
 use crate::{db::stream::MaybeAuto, Handler, Resp, DB};
 
@@ -10,7 +9,7 @@ use super::IterResp;
 pub struct Xadd {
     pub(crate) key: String,
     pub(crate) id: MaybeAuto,
-    pub(crate) k_v: HashMap<String, Bytes>,
+    pub(crate) k_v: Vec<(String, String)>,
 }
 
 impl Xadd {
@@ -50,19 +49,14 @@ impl Xadd {
             }
         };
 
-        let mut k_v = HashMap::new();
+        let mut k_v = Vec::new();
         while let Some(key) = i.next() {
             let Some(value) = i.next() else {
                 bail!("No value found for key: {key:?}");
             };
-            let k = key
-                .as_bulk()
-                .map(|k| str_utf8(k).map(str::to_owned))
-                .transpose()?;
-            let v = value.as_bulk().cloned();
-            k.zip(v)
-                .context("Invalid values for key-value pair")
-                .map(|(k, v)| k_v.insert(k, v))?;
+            let k = key.to_string()?;
+            let v = value.to_string()?;
+            k_v.push((k, v));
         }
         ensure!(!k_v.is_empty(), "Missing key-value pairs");
         Ok(Self { key, id, k_v })

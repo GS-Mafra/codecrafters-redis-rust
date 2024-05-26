@@ -1,17 +1,16 @@
 use anyhow::bail;
-use bytes::Bytes;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::Display,
     time::{Duration, UNIX_EPOCH},
 };
 
 type StreamInner = BTreeMap<EntryId, StreamValues>;
-type StreamValues = HashMap<String, Bytes>;
+type StreamValues = Vec<(String, String)>;
 
 #[derive(Debug)]
 pub struct Stream {
-    inner: StreamInner,
+    pub(crate) inner: StreamInner,
 }
 
 impl Stream {

@@ -6,10 +6,14 @@ use super::IterResp;
 
 #[derive(Debug)]
 pub struct Get {
-    key: String,
+    pub(crate) key: String,
 }
 
 impl Get {
+    pub const fn new(key: String) -> Self {
+        Self { key }
+    }
+
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
         let key = i.next().context("Missing key")?.to_string()?;
         Ok(Self { key })
@@ -17,7 +21,7 @@ impl Get {
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
         let value = DB
-            .get(&self.key)
+            .get(self)
             .map(|v| v.v_type.as_string().context("Invalid type").cloned())
             .transpose()?
             .map_or(Resp::Null, Resp::Bulk);

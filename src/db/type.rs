@@ -28,4 +28,13 @@ impl Type {
             _ => None,
         }
     }
+
+    #[inline]
+    pub(crate) const fn as_stream(&self) -> Option<&Stream> {
+        #[allow(clippy::match_wildcard_for_single_variants)]
+        match self {
+            Self::Stream(stream) => Some(stream),
+            _ => None
+        }
+    }
 }

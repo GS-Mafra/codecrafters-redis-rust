@@ -70,7 +70,8 @@ impl Db {
             .count()
     }
 
-    pub fn get(&self, k: &str) -> Option<ReadValue> {
+    pub fn get(&self, get: &crate::commands::Get) -> Option<ReadValue> {
+        let k = &get.key;
         RwLockReadGuard::try_map(self.inner.read(), |lock| lock.get(k))
             .map(|lock| {
                 let expiration = lock.expiration;
@@ -178,9 +179,9 @@ mod tests {
         let set = crate::commands::Set::new(key.clone(), value, expiry);
         db.set(set);
 
-        assert!(db.get(&key).is_some());
+        assert!(db.get(&crate::commands::Get::new(key.clone())).is_some());
         sleep(Duration::from_millis(2_000));
-        assert!(db.get(&key).is_none());
+        assert!(db.get(&crate::commands::Get::new(key)).is_none());
     }
 
     #[test]
