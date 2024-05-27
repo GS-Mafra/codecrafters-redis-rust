@@ -1,4 +1,7 @@
-use std::str::from_utf8 as str_utf8;
+use std::{
+    ops::Bound::{Excluded, Unbounded},
+    str::from_utf8 as str_utf8,
+};
 
 use anyhow::{ensure, Context};
 
@@ -62,7 +65,8 @@ impl Xread {
                     let mut key_entries = Vec::with_capacity(2);
                     key_entries.push(Resp::bulk(key.clone()));
 
-                    let entries = Stream::format_entries(stream.inner.range(id..).skip(1));
+                    let range = (Excluded(id), Unbounded);
+                    let entries = Stream::format_entries(stream.inner.range(range));
                     key_entries.push(Resp::Array(entries));
 
                     acc.push(Resp::Array(key_entries));
