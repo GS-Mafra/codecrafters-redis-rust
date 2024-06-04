@@ -75,7 +75,7 @@ impl Xread {
             }
 
             if let Some(block_time) = self.block_time {
-                if self.wait_first_unblocked(block_time).await {
+                if self.first_unblocked(block_time).await {
                     break 'resp self.get_key_entries()?;
                 }
             }
@@ -121,7 +121,7 @@ impl Xread {
         })
     }
 
-    async fn wait_first_unblocked(&self, block_time: Duration) -> bool {
+    async fn first_unblocked(&self, block_time: Duration) -> bool {
         let mut set = self
             .keys_ids
             .iter()
