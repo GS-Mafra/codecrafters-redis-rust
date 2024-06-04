@@ -1,9 +1,10 @@
 use std::{
     ops::Bound::{Excluded, Unbounded},
     str::from_utf8 as str_utf8,
+    time::Duration,
 };
 
-use anyhow::{ensure, Context};
+use anyhow::{bail, ensure, Context};
 
 use crate::{
     db::{stream::EntryId, Stream},
@@ -14,17 +15,31 @@ use super::IterResp;
 
 #[derive(Debug)]
 pub struct Xread {
+    block_time: Option<Duration>,
     keys_ids: Vec<(String, EntryId)>,
 }
 
 impl Xread {
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
-        ensure!(
-            i.next().is_some_and(|x| x
-                .as_bulk()
-                .is_some_and(|x| x.eq_ignore_ascii_case(b"streams"))),
-            "Expected \"streams\" argument"
-        );
+        let mut block_time = None;
+
+        while let Some(arg) = i.next().and_then(Resp::as_bulk) {
+            match arg.to_ascii_lowercase().as_slice() {
+                b"block" => {
+                    block_time = i
+                        .next()
+                        .and_then(Resp::as_bulk)
+                        .map(|x| str_utf8(x))
+                        .transpose()?
+                        .map(str::parse::<u64>)
+                        .transpose()?
+                        .map(Duration::from_millis);
+                }
+                b"count" => unimplemented!("count"),
+                b"streams" => break,
+                _ => bail!("Expected \"streams\" argument"),
+            }
+        }
 
         let slice = i.as_slice();
         ensure!(slice.len() % 2 == 0, "Invalid number of arguments");
@@ -46,36 +61,95 @@ impl Xread {
             },
         )?;
 
-        Ok(Self { keys_ids })
+        Ok(Self {
+            block_time,
+            keys_ids,
+        })
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let resp = {
-            let lock = DB.inner.read();
+        let resp = 'resp: {
+            let resp = self.get_key_entries()?;
+            if resp != Resp::Null {
+                break 'resp resp;
+            }
 
-            let resp = self
-                .keys_ids
-                .iter()
-                .try_fold(Vec::new(), |mut acc, (key, id)| {
-                    let stream = lock
-                        .get(key)
-                        .and_then(|x| x.v_type.as_stream())
-                        .with_context(|| format!("XREAD on invalid key: \"{key}\""))?;
-
-                    let mut key_entries = Vec::with_capacity(2);
-                    key_entries.push(Resp::bulk(key.clone()));
-
-                    let range = (Excluded(id), Unbounded);
-                    let entries = Stream::format_entries(stream.inner.range(range));
-                    key_entries.push(Resp::Array(entries));
-
-                    acc.push(Resp::Array(key_entries));
-                    anyhow::Ok(acc)
-                })?;
-            Resp::Array(resp)
+            if let Some(block_time) = self.block_time {
+                if self.wait_first_unblocked(block_time).await {
+                    break 'resp self.get_key_entries()?;
+                }
+            }
+            Resp::Null
         };
 
         handler.write(&resp).await?;
         Ok(())
+    }
+
+    fn get_key_entries(&self) -> anyhow::Result<Resp> {
+        let lock = DB.inner.read();
+
+        let mut v = Vec::new();
+        for (key, id) in &self.keys_ids {
+            let Some(stream) = lock
+                .get(key)
+                .map(|x| {
+                    x.v_type
+                        .as_stream()
+                        .with_context(|| format!("XREAD on invalid key: \"{key}\""))
+                })
+                .transpose()?
+            else {
+                continue;
+            };
+
+            let range = (Excluded(id), Unbounded);
+            let entries = Stream::format_entries(stream.inner.range(range));
+            if entries.is_empty() {
+                continue;
+            }
+
+            let key_entries = vec![Resp::bulk(key.clone()), Resp::Array(entries)];
+            v.push(Resp::Array(key_entries));
+        }
+        drop(lock);
+
+        Ok(if v.is_empty() {
+            Resp::Null
+        } else {
+            Resp::Array(v)
+        })
+    }
+
+    async fn wait_first_unblocked(&self, block_time: Duration) -> bool {
+        let mut set = self
+            .keys_ids
+            .iter()
+            .cloned()
+            .map(|(key, id)| async move {
+                let (lock, notify) = &DB.added_stream;
+                loop {
+                    notify.notified().await;
+                    if let Some((added_key, added_id)) = &*lock.read() {
+                        if *added_key == key && *added_id > id {
+                            break;
+                        }
+                    }
+                }
+            })
+            .collect::<tokio::task::JoinSet<_>>();
+
+        let sleep = tokio::time::sleep(block_time);
+        tokio::pin!(sleep);
+
+        tokio::select! {
+            _ = set.join_next() => {
+                true
+            }
+            () = &mut sleep => {
+                println!("timed out");
+                false
+            }
+        }
     }
 }

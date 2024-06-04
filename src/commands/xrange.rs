@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::{ops::RangeInclusive, str::from_utf8 as str_utf8};
 
 use crate::{
-    db::{stream::EntryId, Stream, Type},
+    db::{stream::EntryId, Stream},
     Handler, Resp, DB,
 };
 
@@ -34,7 +34,11 @@ impl Xrange {
             .inner
             .read()
             .get(&self.key)
-            .map(|x| Type::as_stream(&x.v_type).context("XRANGE on invalid key"))
+            .map(|x| {
+                x.v_type
+                    .as_stream()
+                    .with_context(|| format!("XRANGE on invalid key: \"{}\"", self.key))
+            })
             .transpose()?
             .map(|stream| stream.inner.range(self.range.start()..=self.range.end()))
             .map_or_else(Vec::new, Stream::format_entries);

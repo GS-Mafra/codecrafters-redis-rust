@@ -55,7 +55,7 @@ impl Stream {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash)]
+#[derive(Debug, PartialEq, PartialOrd, Ord, Eq, Hash, Clone, Copy)]
 pub struct EntryId {
     ms_time: Duration,
     sq_num: u64,

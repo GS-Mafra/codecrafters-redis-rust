@@ -1,6 +1,8 @@
 use anyhow::bail;
 use once_cell::sync::Lazy;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
+use stream::EntryId;
+use tokio::sync::Notify;
 use std::{
     borrow::Cow,
     collections::{hash_map::Entry, HashMap},
@@ -23,12 +25,14 @@ type ReadValue<'a> = MappedRwLockReadGuard<'a, Value>;
 
 pub struct Db {
     pub(crate) inner: RwLock<HashMap<String, Value>>,
+    pub(crate) added_stream: (RwLock<Option<(String, EntryId)>>, Notify),
 }
 
 impl Db {
     fn new() -> Self {
         Self {
             inner: RwLock::new(HashMap::new()),
+            added_stream: (RwLock::new(None), Notify::new()),
         }
     }
 
@@ -40,34 +44,43 @@ impl Db {
 
     pub fn xadd(&self, xadd: crate::commands::Xadd) -> anyhow::Result<String> {
         let mut lock = self.inner.write();
-        let entry = lock.entry(xadd.key);
+        let entry = lock.entry(xadd.key.clone());
 
-        let res = match entry {
+        let (res, id) = match entry {
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
                 let Type::Stream(stream) = &mut entry.v_type else {
-                    bail!("XADD on invalid key");
+                    bail!("XADD on invalid key \"{}\"", xadd.key);
                 };
                 let id = xadd.id.auto_generate(stream)?;
-                stream.xadd(id, xadd.k_v)
+                let res = stream.xadd(id, xadd.k_v);
+                (res, id)
             }
             Entry::Vacant(entry) => {
                 let mut stream = Stream::new();
                 let id = xadd.id.auto_generate(&stream)?;
                 let res = stream.xadd(id, xadd.k_v);
                 entry.insert(Value::new(Type::Stream(stream), None));
-                res
+                (res, id)
             }
         };
         drop(lock);
+        {
+            let (last_added, notify) = &self.added_stream;
+            *last_added.write() = Some((xadd.key, id));
+            notify.notify_waiters();
+        }
         Ok(res)
     }
 
     pub fn del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {
         let mut lock = self.inner.write();
-        keys.filter_map(|k| lock.remove(k.as_ref()).map(|_| k))
-            .inspect(|k| tracing::info!("Deleted: \"{}\"", k.as_ref()))
-            .count()
+        keys.filter_map(|k| {
+            let k = k.as_ref();
+            lock.remove(k)
+                .inspect(|_| tracing::info!("Deleted: \"{}\"", k))
+        })
+        .count()
     }
 
     pub fn get(&self, get: &crate::commands::Get) -> Option<ReadValue> {
@@ -175,12 +188,12 @@ mod tests {
 
         let key = "test".to_owned();
         let value = b"bytes".as_ref().into();
-        let expiry = Some(Duration::from_millis(2_000));
+        let expiry = Some(Duration::from_millis(100));
         let set = crate::commands::Set::new(key.clone(), value, expiry);
         db.set(set);
 
         assert!(db.get(&crate::commands::Get::new(key.clone())).is_some());
-        sleep(Duration::from_millis(2_000));
+        sleep(Duration::from_millis(100));
         assert!(db.get(&crate::commands::Get::new(key)).is_none());
     }
 
