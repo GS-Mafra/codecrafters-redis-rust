@@ -146,7 +146,7 @@ impl Xread {
             _ = set.join_next() => {
                 true
             }
-            () = &mut sleep => {
+            () = &mut sleep, if block_time.as_millis() != 0 => {
                 println!("timed out");
                 false
             }
