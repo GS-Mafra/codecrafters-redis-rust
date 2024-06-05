@@ -127,10 +127,10 @@ impl Xread {
             .iter()
             .cloned()
             .map(|(key, id)| async move {
-                let (lock, notify) = &DB.added_stream;
+                let mut rx = DB.added_stream.subscribe();
                 loop {
-                    notify.notified().await;
-                    if let Some((added_key, added_id)) = &*lock.read() {
+                    rx.changed().await.expect("Sender alive");
+                    if let Some((added_key, added_id)) = &*rx.borrow_and_update() {
                         if *added_key == key && *added_id > id {
                             break;
                         }

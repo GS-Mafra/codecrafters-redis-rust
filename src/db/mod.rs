@@ -1,8 +1,6 @@
 use anyhow::bail;
 use once_cell::sync::Lazy;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
-use stream::EntryId;
-use tokio::sync::Notify;
 use std::{
     borrow::Cow,
     collections::{hash_map::Entry, HashMap},
@@ -10,6 +8,8 @@ use std::{
     path::Path,
     time::SystemTime,
 };
+use stream::EntryId;
+use tokio::sync::watch;
 
 use crate::Rdb;
 
@@ -25,14 +25,14 @@ type ReadValue<'a> = MappedRwLockReadGuard<'a, Value>;
 
 pub struct Db {
     pub(crate) inner: RwLock<HashMap<String, Value>>,
-    pub(crate) added_stream: (RwLock<Option<(String, EntryId)>>, Notify),
+    pub(crate) added_stream: watch::Sender<Option<(String, EntryId)>>,
 }
 
 impl Db {
     fn new() -> Self {
         Self {
             inner: RwLock::new(HashMap::new()),
-            added_stream: (RwLock::new(None), Notify::new()),
+            added_stream: watch::Sender::new(None),
         }
     }
 
@@ -65,11 +65,13 @@ impl Db {
             }
         };
         drop(lock);
-        {
-            let (last_added, notify) = &self.added_stream;
-            *last_added.write() = Some((xadd.key, id));
-            notify.notify_waiters();
-        }
+        tracing::debug!(
+            "Notifying {qnty} waiters of stream added {key} {id}",
+            qnty = self.added_stream.receiver_count(),
+            key = xadd.key,
+            id = id
+        );
+        let _ = self.added_stream.send(Some((xadd.key, id)));
         Ok(res)
     }
 
