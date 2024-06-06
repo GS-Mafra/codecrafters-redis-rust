@@ -1,5 +1,5 @@
 use std::{
-    ops::Bound::{Excluded, Unbounded},
+    ops::Bound::{self, Excluded, Included, Unbounded},
     str::from_utf8 as str_utf8,
     time::Duration,
 };
@@ -84,41 +84,38 @@ impl Xread {
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let resp = 'resp: {
-            {
-                let resp = self.get_keys_entries()?;
-                if resp != Resp::Null {
-                    break 'resp resp;
-                }
-            }
+        let resp = {
+            let sync = {
+                let iter = self.keys_ids.iter().filter_map(|(key, id)| match id {
+                    MaybeTopId::NotTop(id) => Some((key, (Excluded(*id), Unbounded))),
+                    MaybeTopId::Top => None,
+                });
 
-            if let Some(block_time) = self.block_time {
-                if let Some((key, id)) = self.first_unblocked(block_time).await? {
-                    let lock = DB.inner.read();
-                    let stream = lock.get(&key).and_then(|x| x.v_type.as_stream()).unwrap();
-                    let entries = Stream::format_entries(stream.iter_with_count(self.count, id..));
-                    drop(lock);
-                    // FIXME
-                    let resp = Resp::Array(vec![Resp::Array(vec![
-                        Resp::bulk(key),
-                        Resp::Array(entries),
-                    ])]);
-                    break 'resp resp;
-                }
-            }
+                self.get_keys_entries(iter)?
+            };
 
-            Resp::Null
+            if sync != Resp::Null {
+                sync
+            } else if let Some((key, id)) = self.first_unblocked().await? {
+                let iter = std::iter::once((&key, (Included(id), Unbounded)));
+                self.get_keys_entries(iter)?
+            } else {
+                Resp::Null
+            }
         };
 
         handler.write(&resp).await?;
         Ok(())
     }
 
-    fn get_keys_entries(&self) -> anyhow::Result<Resp> {
+    fn get_keys_entries<'a, I>(&self, i: I) -> anyhow::Result<Resp>
+    where
+        I: Iterator<Item = (&'a String, (Bound<EntryId>, Bound<EntryId>))>,
+    {
         let lock = DB.inner.read();
 
         let mut v = Vec::new();
-        for (key, id) in &self.keys_ids {
+        for (key, range) in i {
             let Some(stream) = lock
                 .get(key)
                 .map(|x| {
@@ -131,13 +128,7 @@ impl Xread {
                 continue;
             };
 
-            let entries = {
-                let range = match id {
-                    MaybeTopId::NotTop(id) => (Excluded(*id), Unbounded),
-                    MaybeTopId::Top => continue,
-                };
-                Stream::format_entries(stream.iter_with_count(self.count, range))
-            };
+            let entries = Stream::format_entries(stream.iter_with_count(self.count, range));
             if entries.is_empty() {
                 continue;
             }
@@ -154,10 +145,11 @@ impl Xread {
         })
     }
 
-    async fn first_unblocked(
-        &self,
-        block_time: Duration,
-    ) -> anyhow::Result<Option<(String, EntryId)>> {
+    async fn first_unblocked(&self) -> anyhow::Result<Option<(String, EntryId)>> {
+        let Some(block_time) = self.block_time else {
+            return Ok(None);
+        };
+
         let mut set = self
             .keys_ids
             .iter()
