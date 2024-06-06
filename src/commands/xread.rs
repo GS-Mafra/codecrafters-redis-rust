@@ -8,7 +8,7 @@ use anyhow::{bail, ensure, Context};
 
 use crate::{
     db::{stream::EntryId, Stream},
-    Handler, Resp, DB,
+    slice_to_int, Handler, Resp, DB,
 };
 
 use super::IterResp;
@@ -16,12 +16,14 @@ use super::IterResp;
 #[derive(Debug)]
 pub struct Xread {
     block_time: Option<Duration>,
-    keys_ids: Vec<(String, EntryId)>,
+    count: Option<usize>,
+    keys_ids: Vec<(String, MaybeTopId)>,
 }
 
 impl Xread {
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
         let mut block_time = None;
+        let mut count = None;
 
         while let Some(arg) = i.next().and_then(Resp::as_bulk) {
             match arg.to_ascii_lowercase().as_slice() {
@@ -29,20 +31,27 @@ impl Xread {
                     block_time = i
                         .next()
                         .and_then(Resp::as_bulk)
-                        .map(|x| str_utf8(x))
-                        .transpose()?
-                        .map(str::parse::<u64>)
+                        .map(slice_to_int::<u64>)
                         .transpose()?
                         .map(Duration::from_millis);
                 }
-                b"count" => unimplemented!("count"),
+                b"count" => {
+                    count = i
+                        .next()
+                        .and_then(Resp::as_bulk)
+                        .map(slice_to_int::<usize>)
+                        .transpose()?;
+                }
                 b"streams" => break,
                 _ => bail!("Expected \"streams\" argument"),
             }
         }
 
         let slice = i.as_slice();
-        ensure!(slice.len() % 2 == 0, "Invalid number of arguments");
+        ensure!(
+            !slice.is_empty() && slice.len() % 2 == 0,
+            "Invalid number of arguments"
+        );
 
         let half = slice.len() / 2;
         let keys_ids = slice[..half].iter().zip(slice[half..].iter()).try_fold(
@@ -51,9 +60,15 @@ impl Xread {
                 let key = key.to_string()?;
                 let id = id
                     .as_bulk()
-                    .map(|id| str_utf8(id))
-                    .transpose()?
-                    .map(|id| EntryId::split_or_seq(0, id))
+                    .map(|id| {
+                        let id = if id.as_ref() == b"$" {
+                            MaybeTopId::Top
+                        } else {
+                            let id = str_utf8(id).map(|id| EntryId::split_or_seq(0, id))??;
+                            MaybeTopId::NotTop(id)
+                        };
+                        anyhow::Ok(id)
+                    })
                     .transpose()?
                     .context("Invalid id")?;
                 acc.push((key, id));
@@ -63,22 +78,31 @@ impl Xread {
 
         Ok(Self {
             block_time,
+            count,
             keys_ids,
         })
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
         let resp = 'resp: {
-            let resp = self.get_key_entries()?;
-            if resp != Resp::Null {
-                break 'resp resp;
+            {
+                let resp = self.get_keys_entries()?;
+                if resp != Resp::Null {
+                    break 'resp resp;
+                }
             }
 
             if let Some(block_time) = self.block_time {
-                if self.first_unblocked(block_time).await {
-                    break 'resp self.get_key_entries()?;
+                if let Some((key, id)) = self.first_unblocked(block_time).await? {
+                    let lock = DB.inner.read();
+                    let stream = lock.get(&key).and_then(|x| x.v_type.as_stream()).unwrap();
+                    let entries = Stream::format_entries(stream.iter_with_count(self.count, id..));
+                    drop(lock);
+                    let resp = Resp::Array(vec![Resp::bulk(key), Resp::Array(entries)]);
+                    break 'resp resp;
                 }
             }
+
             Resp::Null
         };
 
@@ -86,7 +110,7 @@ impl Xread {
         Ok(())
     }
 
-    fn get_key_entries(&self) -> anyhow::Result<Resp> {
+    fn get_keys_entries(&self) -> anyhow::Result<Resp> {
         let lock = DB.inner.read();
 
         let mut v = Vec::new();
@@ -103,8 +127,13 @@ impl Xread {
                 continue;
             };
 
-            let range = (Excluded(id), Unbounded);
-            let entries = Stream::format_entries(stream.inner.range(range));
+            let entries = {
+                let range = match id {
+                    MaybeTopId::NotTop(id) => (Excluded(*id), Unbounded),
+                    MaybeTopId::Top => continue,
+                };
+                Stream::format_entries(stream.iter_with_count(self.count, range))
+            };
             if entries.is_empty() {
                 continue;
             }
@@ -121,7 +150,10 @@ impl Xread {
         })
     }
 
-    async fn first_unblocked(&self, block_time: Duration) -> bool {
+    async fn first_unblocked(
+        &self,
+        block_time: Duration,
+    ) -> anyhow::Result<Option<(String, EntryId)>> {
         let mut set = self
             .keys_ids
             .iter()
@@ -130,11 +162,23 @@ impl Xread {
                 let mut rx = DB.added_stream.subscribe();
                 loop {
                     rx.changed().await.expect("Sender alive");
-                    if let Some((added_key, added_id)) = &*rx.borrow_and_update() {
-                        if *added_key == key && *added_id > id {
-                            break;
+                    let Some((added_key, added_id)) = &*rx.borrow_and_update() else {
+                        continue;
+                    };
+
+                    if *added_key != key {
+                        continue;
+                    }
+
+                    match id {
+                        MaybeTopId::Top => (),
+                        MaybeTopId::NotTop(id) => {
+                            if *added_id < id {
+                                continue;
+                            }
                         }
                     }
+                    break (added_key.clone(), *added_id);
                 }
             })
             .collect::<tokio::task::JoinSet<_>>();
@@ -143,13 +187,20 @@ impl Xread {
         tokio::pin!(sleep);
 
         tokio::select! {
-            _ = set.join_next() => {
-                true
+            res = set.join_next() => {
+                let (key, id) = res.expect("1 task")?;
+                Ok(Some((key,id)))
             }
             () = &mut sleep, if block_time.as_millis() != 0 => {
                 println!("timed out");
-                false
+                Ok(None)
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum MaybeTopId {
+    Top,
+    NotTop(EntryId),
 }

@@ -20,3 +20,12 @@ pub use db::DB;
 
 mod rdb;
 pub use rdb::Rdb;
+
+#[inline]
+pub fn slice_to_int<T>(slice: impl AsRef<[u8]>) -> anyhow::Result<T>
+where
+    T: atoi::FromRadix10SignedChecked,
+{
+    use anyhow::Context;
+    atoi::atoi::<T>(slice.as_ref()).context("Failed to parse int from slice")
+}

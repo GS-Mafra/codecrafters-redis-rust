@@ -1,7 +1,9 @@
 use anyhow::bail;
+use either::Either;
 use std::{
     collections::BTreeMap,
     fmt::Display,
+    ops::RangeBounds,
     time::{Duration, UNIX_EPOCH},
 };
 
@@ -52,6 +54,21 @@ impl Stream {
             acc.push(Resp::Array(values));
             acc
         })
+    }
+
+    pub(crate) fn iter_with_count<R>(
+        &self,
+        count: Option<usize>,
+        range: R,
+    ) -> impl Iterator<Item = (&EntryId, &StreamValues)>
+    where
+        R: RangeBounds<EntryId>,
+    {
+        let range = self.inner.range(range);
+        match count {
+            Some(count) => Either::Left(range.take(count)),
+            None => Either::Right(range),
+        }
     }
 }
 

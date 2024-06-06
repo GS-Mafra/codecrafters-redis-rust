@@ -30,7 +30,8 @@ impl ReplConf {
             b"getack" => {
                 ensure!(i
                     .next()
-                    .is_some_and(|x| x.as_bulk().is_some_and(|x| x.as_ref() == b"*")));
+                    .and_then(Resp::as_bulk)
+                    .is_some_and(|x| x.as_ref() == b"*"));
                 Self::GetAck
             }
             b"ack" => {

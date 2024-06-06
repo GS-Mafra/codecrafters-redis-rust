@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Context;
 use bytes::Bytes;
 
-use crate::{db::Type, resp::slice_to_int, Handler, Resp, DB};
+use crate::{db::Type, slice_to_int, Handler, Resp, DB};
 
 use super::IterResp;
 

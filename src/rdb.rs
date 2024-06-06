@@ -8,7 +8,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::db::{Type, Value};
+use crate::{db::{Type, Value}, slice_to_int};
 
 #[derive(Debug)]
 #[allow(dead_code)]
@@ -26,7 +26,7 @@ impl Rdb {
 
         ensure!(&*bytes.split_to(5) == b"REDIS", "Expected magic string");
 
-        let version = str_utf8(&bytes.split_to(4))?.parse::<u32>()?;
+        let version = slice_to_int::<u32>(&bytes.split_to(4))?;
         tracing::debug!("Parsed version: {version:?}");
 
         let aux_fields = AuxFields::parse(&mut bytes);

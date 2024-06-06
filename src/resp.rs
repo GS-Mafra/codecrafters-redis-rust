@@ -4,6 +4,8 @@ use bytes::{Buf, Bytes};
 use std::io::Cursor;
 use thiserror::Error;
 
+use crate::slice_to_int;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Incomplete resp")]
@@ -210,13 +212,6 @@ fn read_line<'a>(cur: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
         return Ok(&cur.get_ref()[start..pos + start]);
     }
     Err(Error::Incomplete)
-}
-
-pub fn slice_to_int<T>(slice: impl AsRef<[u8]>) -> anyhow::Result<T>
-where
-    T: FromRadix10SignedChecked,
-{
-    atoi::atoi::<T>(slice.as_ref()).context("Failed to parse int from slice")
 }
 
 #[cfg(test)]

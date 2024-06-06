@@ -3,7 +3,7 @@ use std::{ops::RangeInclusive, str::from_utf8 as str_utf8};
 
 use crate::{
     db::{stream::EntryId, Stream},
-    Handler, Resp, DB,
+    slice_to_int, Handler, Resp, DB,
 };
 
 use super::IterResp;
@@ -12,21 +12,32 @@ use super::IterResp;
 pub struct Xrange {
     key: String,
     range: RangeInclusive<EntryId>,
+    count: Option<usize>,
 }
 
 impl Xrange {
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
         let key = i.next().context("Missing key")?.to_string()?;
-        let start = i
+        let range = {
+            let start = i
+                .next()
+                .context("Missing start")
+                .and_then(|x| to_entry_id(x, true))?;
+            let end = i
+                .next()
+                .context("Missing end")
+                .and_then(|x| to_entry_id(x, false))?;
+            start..=end
+        };
+
+        let count = i
             .next()
-            .context("Missing start")
-            .and_then(|x| to_entry_id(x, true))?;
-        let end = i
-            .next()
-            .context("Missing end")
-            .and_then(|x| to_entry_id(x, false))?;
-        let range = start..=end;
-        Ok(Self { key, range })
+            .and_then(Resp::as_bulk)
+            .filter(|x| x.eq_ignore_ascii_case(b"count"))
+            .and_then(|_| i.next().and_then(Resp::as_bulk).map(slice_to_int::<usize>))
+            .transpose()?;
+
+        Ok(Self { key, range, count })
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
@@ -40,7 +51,7 @@ impl Xrange {
                     .with_context(|| format!("XRANGE on invalid key: \"{}\"", self.key))
             })
             .transpose()?
-            .map(|stream| stream.inner.range(self.range.start()..=self.range.end()))
+            .map(|stream| stream.iter_with_count(self.count, self.range.start()..=self.range.end()))
             .map_or_else(Vec::new, Stream::format_entries);
         handler.write(&Resp::Array(resp)).await?;
         Ok(())
