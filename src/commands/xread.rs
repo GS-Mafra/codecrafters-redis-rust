@@ -98,7 +98,11 @@ impl Xread {
                     let stream = lock.get(&key).and_then(|x| x.v_type.as_stream()).unwrap();
                     let entries = Stream::format_entries(stream.iter_with_count(self.count, id..));
                     drop(lock);
-                    let resp = Resp::Array(vec![Resp::bulk(key), Resp::Array(entries)]);
+                    // FIXME
+                    let resp = Resp::Array(vec![Resp::Array(vec![
+                        Resp::bulk(key),
+                        Resp::Array(entries),
+                    ])]);
                     break 'resp resp;
                 }
             }
