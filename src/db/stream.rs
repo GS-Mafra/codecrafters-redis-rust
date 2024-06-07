@@ -37,9 +37,6 @@ impl Stream {
         I: Iterator<Item = (&'a EntryId, &'a StreamValues)>,
     {
         entries.fold(Vec::new(), |mut acc, (id, key_values)| {
-            let mut values = Vec::with_capacity(2);
-            values.push(Resp::bulk(id.to_string()));
-
             let k_v = key_values.iter().fold(
                 Vec::with_capacity(key_values.len() * 2),
                 |mut acc, (key, value)| {
@@ -49,7 +46,7 @@ impl Stream {
                 },
             );
 
-            values.push(Resp::Array(k_v));
+            let values = vec![Resp::bulk(id.to_string()), Resp::Array(k_v)];
 
             acc.push(Resp::Array(values));
             acc

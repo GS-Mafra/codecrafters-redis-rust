@@ -60,7 +60,7 @@ impl Db {
                 let mut stream = Stream::new();
                 let id = xadd.id.auto_generate(&stream)?;
                 let res = stream.xadd(id, xadd.k_v);
-                entry.insert(Value::new(Type::Stream(stream), None));
+                entry.insert(Value::new_no_expiry(Type::Stream(stream)));
                 (res, id)
             }
         };
@@ -89,8 +89,7 @@ impl Db {
         let k = &get.key;
         RwLockReadGuard::try_map(self.inner.read(), |lock| lock.get(k))
             .map(|lock| {
-                let expiration = lock.expiration;
-                if expiration.is_some_and(|exp| exp <= SystemTime::now()) {
+                if lock.expiration.is_some_and(|exp| exp <= SystemTime::now()) {
                     drop(lock);
                     tracing::info!("\"{k}\" expired");
                     self.del(std::iter::once(k));
@@ -164,16 +163,19 @@ impl Value {
             expiration,
         }
     }
+
+    pub const fn new_no_expiry(r#type: Type) -> Self {
+        Self::new(r#type, None)
+    }
 }
 
 impl Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use chrono::{DateTime, Local};
+
         f.debug_struct("Value")
             .field("type", &self.v_type)
-            .field(
-                "expiration",
-                &self.expiration.map(chrono::DateTime::<chrono::Local>::from),
-            )
+            .field("expiration", &self.expiration.map(DateTime::<Local>::from))
             .finish()
     }
 }
@@ -182,21 +184,24 @@ impl Debug for Value {
 mod tests {
     use std::{thread::sleep, time::Duration};
 
+    use crate::commands::{Get, Set};
+
     use super::*;
 
     #[test]
     fn expires() {
+
         let db = Db::new();
 
         let key = "test".to_owned();
         let value = b"bytes".as_ref().into();
         let expiry = Some(Duration::from_millis(100));
-        let set = crate::commands::Set::new(key.clone(), value, expiry);
+        let set = Set::new(key.clone(), value, expiry);
         db.set(set);
 
-        assert!(db.get(&crate::commands::Get::new(key.clone())).is_some());
+        assert!(db.get(&Get::new(key.clone())).is_some());
         sleep(Duration::from_millis(100));
-        assert!(db.get(&crate::commands::Get::new(key)).is_none());
+        assert!(db.get(&Get::new(key)).is_none());
     }
 
     #[test]
@@ -207,7 +212,7 @@ mod tests {
 
         keys.clone()
             .into_iter()
-            .map(|k| crate::commands::Set::new(k, "test".into(), None))
+            .map(|k| Set::new(k, "test".into(), None))
             .for_each(|set| {
                 db.set(set);
             });
