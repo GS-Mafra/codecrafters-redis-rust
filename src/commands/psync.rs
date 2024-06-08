@@ -1,24 +1,38 @@
+use std::fmt::Display;
+
 use anyhow::Context;
 use bytes::Bytes;
 
-use crate::{Handler, Master, Resp};
+use crate::{slice_to_int, Handler, Master, Resp};
 
 use super::IterResp;
 
 #[derive(Debug)]
 pub struct Psync {
     id: String,
-    offset: i64,
+    offset: Offset,
 }
 
 impl Psync {
-    pub(crate) const fn new(id: String, offset: i64) -> Self {
+    pub(crate) const fn new(id: String, offset: Offset) -> Self {
         Self { id, offset }
+    }
+
+    pub(crate) fn first_sync() -> Self {
+        Self::new("?".into(), Offset::Unknown)
     }
 
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<Self> {
         let id = i.next().context("Expected id")?.to_string()?;
-        let offset = i.next().context("Expected offset")?.to_int()?;
+        let offset = i
+            .next()
+            .and_then(Resp::as_bulk)
+            .map(|x| match x.as_ref() {
+                b"-1" => Ok(Offset::Unknown),
+                _ => slice_to_int(x).map(Offset::Num),
+            })
+            .transpose()?
+            .context("Expected offset")?;
         Ok(Self { id, offset })
     }
 
@@ -42,6 +56,21 @@ impl Psync {
             Resp::bulk(self.id),
             Resp::bulk(self.offset.to_string()),
         ])
+    }
+}
+
+#[derive(Debug)]
+pub enum Offset {
+    Unknown,
+    Num(usize),
+}
+
+impl Display for Offset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unknown => f.write_str("-1"),
+            Self::Num(num) => num.fmt(f)
+        }
     }
 }
 

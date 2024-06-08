@@ -97,17 +97,14 @@ impl Slave {
         check_handshake(&mut handler, "OK").await?;
 
         tracing::info!("Sending PSYNC to master");
-        handler
-            .write(&Psync::new("?".into(), -1).into_resp())
-            .await?;
+        handler.write(&Psync::first_sync().into_resp()).await?;
         let recv = handler.read().await?;
         tracing::info!("Received: {recv:?}");
 
-        if handler.buf.is_empty() {
-            handler.read_bytes().await?;
-        }
-
         let rdb = {
+            if handler.buf.is_empty() {
+                handler.read_bytes().await?;
+            }
             let mut cur = Cursor::new(handler.buf.as_ref());
             let rdb = Resp::parse_rdb(&mut cur)?;
             handler.buf.advance(cur.position().try_into()?);

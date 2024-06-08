@@ -1,6 +1,5 @@
 use anyhow::{bail, Context};
 use std::time::Duration;
-use tokio::time::Instant;
 
 use crate::{Command, Handler, Resp, Role};
 
@@ -62,8 +61,7 @@ impl Wait {
 
         let mut processed = 0_i64;
         let task = async {
-            #[allow(clippy::significant_drop_in_scrutinee)] // clippy bug?
-            for slave in slaves.iter_mut() {
+            for slave in &mut *slaves {
                 let Some(resp) = slave.handler.read().await? else {
                     continue;
                 };
@@ -79,7 +77,7 @@ impl Wait {
             anyhow::Ok(processed)
         };
         if self.timeout.as_millis() != 0 {
-            let _ = tokio::time::timeout_at(Instant::now() + self.timeout, task).await;
+            let _ = tokio::time::timeout(self.timeout, task).await;
         } else {
             task.await?;
         }
