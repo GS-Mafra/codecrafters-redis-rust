@@ -1,4 +1,5 @@
 use anyhow::bail;
+use bytes::Bytes;
 use once_cell::sync::Lazy;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use std::{
@@ -75,14 +76,19 @@ impl Db {
         Ok(res)
     }
 
-    pub fn del(&self, keys: impl Iterator<Item = impl AsRef<str>>) -> usize {
+    pub fn del<I, S>(&self, keys: I) -> usize
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let mut lock = self.inner.write();
-        keys.filter_map(|k| {
-            let k = k.as_ref();
-            lock.remove(k)
-                .inspect(|_| tracing::info!("Deleted: \"{}\"", k))
-        })
-        .count()
+        keys.into_iter()
+            .filter_map(|k| {
+                let k = k.as_ref();
+                lock.remove(k)
+                    .inspect(|_| tracing::info!("Deleted: \"{}\"", k))
+            })
+            .count()
     }
 
     pub fn get(&self, get: &crate::commands::Get) -> Option<ReadValue> {
@@ -129,25 +135,15 @@ impl Db {
     }
 
     pub fn apply_rdb(&self, rdb: Rdb) {
-        let mut lock = self.inner.write();
-        rdb.db
-            .maps
-            .into_iter()
-            .flatten()
-            .filter(|(key, v)| {
+        self.inner
+            .write()
+            .extend(rdb.db.maps.into_iter().flatten().filter(|(key, v)| {
                 let expired = v.expiration.is_some_and(|exp| exp <= SystemTime::now());
                 if expired {
                     tracing::info!("key: \"{key}\" from rdb expired");
                 }
                 !expired
-            })
-            .for_each(|(key, value)| {
-                let Type::String(_) = &value.v_type else {
-                    todo!("{:?}", value.v_type);
-                };
-                lock.insert(key, value);
-            });
-        tracing::debug!("Applied rdb: {lock:#?}");
+            }));
     }
 }
 
@@ -157,6 +153,7 @@ pub struct Value {
 }
 
 impl Value {
+    #[inline]
     pub const fn new(r#type: Type, expiration: Option<SystemTime>) -> Self {
         Self {
             v_type: r#type,
@@ -164,8 +161,14 @@ impl Value {
         }
     }
 
+    #[inline]
     pub const fn new_no_expiry(r#type: Type) -> Self {
         Self::new(r#type, None)
+    }
+
+    #[inline]
+    pub const fn new_no_expiry_string(bytes: Bytes) -> Self {
+        Self::new_no_expiry(Type::String(bytes))
     }
 }
 
@@ -190,7 +193,6 @@ mod tests {
 
     #[test]
     fn expires() {
-
         let db = Db::new();
 
         let key = "test".to_owned();
