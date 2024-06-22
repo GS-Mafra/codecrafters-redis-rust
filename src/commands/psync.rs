@@ -3,7 +3,7 @@ use std::fmt::Display;
 use anyhow::Context;
 use bytes::Bytes;
 
-use crate::{slice_to_int, Handler, Master, Resp};
+use crate::{slice_to_int, Master, Resp};
 
 use super::IterResp;
 
@@ -36,18 +36,12 @@ impl Psync {
         Ok(Self { id, offset })
     }
 
-    pub async fn apply_and_respond(
-        &self,
-        handler: &mut Handler,
-        master: &Master,
-    ) -> anyhow::Result<()> {
+    pub fn execute(&self, master: &Master) -> anyhow::Result<(Resp, Resp)> {
         let master_replid = master.replid();
         let master_repl_offset = master.repl_offset();
 
         let resp = Resp::Simple(format!("FULLRESYNC {master_replid} {master_repl_offset}"));
-        handler.write(&resp).await?;
-        handler.write(&get_data()?).await?;
-        Ok(())
+        Ok((resp, get_data()?))
     }
 
     pub(crate) fn into_resp(self) -> Resp {
@@ -69,7 +63,7 @@ impl Display for Offset {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Unknown => f.write_str("-1"),
-            Self::Num(num) => num.fmt(f)
+            Self::Num(num) => num.fmt(f),
         }
     }
 }

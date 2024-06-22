@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::{db::Type as DbType, Handler, Resp, DB};
+use crate::{db::Type as DbType, Resp, DB};
 
 use super::IterResp;
 
@@ -15,7 +15,7 @@ impl Type {
         Ok(Self { key })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub fn execute(&self) -> Resp {
         let ty = DB
             .inner
             .read()
@@ -24,8 +24,6 @@ impl Type {
                 DbType::String(_) => "string",
                 DbType::Stream(_) => "stream",
             });
-        let resp = Resp::simple(ty);
-        handler.write(&resp).await?;
-        Ok(())
+        Resp::simple(ty)
     }
 }

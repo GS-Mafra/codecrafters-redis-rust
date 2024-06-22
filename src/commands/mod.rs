@@ -49,6 +49,9 @@ pub use incr::Incr;
 mod multi;
 pub use multi::Multi;
 
+mod exec;
+pub use exec::Exec;
+
 use anyhow::bail;
 
 use crate::Resp;
@@ -74,10 +77,11 @@ pub enum Command {
     Xread(Xread),
     Incr(Incr),
     Multi(Multi),
+    Exec,
 }
 
 impl Command {
-    pub fn parse(resp: &Resp) -> anyhow::Result<(Self, &[Resp])> {
+    pub fn parse(resp: &Resp) -> anyhow::Result<(Self, Vec<Resp>)> {
         let Some(raw_cmd) = resp.as_array() else {
             bail!("Unsupported RESP for command");
         };
@@ -105,9 +109,13 @@ impl Command {
             b"xread" => Self::Xread(Xread::parse(values)?),
             b"incr" => Self::Incr(Incr::parse(values)?),
             b"multi" => Self::Multi(Multi::parse(values)?),
+            b"exec" => {
+                Exec::parse(values)?;
+                Self::Exec
+            }
             _ => unimplemented!("{command:?} {:?}", &raw_cmd[1..]),
         };
         tracing::debug!("Parsed command: {parsed_cmd:#?}");
-        Ok((parsed_cmd, raw_cmd))
+        Ok((parsed_cmd, raw_cmd.to_owned()))
     }
 }

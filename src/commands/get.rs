@@ -1,6 +1,6 @@
 use anyhow::Context;
 
-use crate::{Handler, Resp, DB};
+use crate::{Resp, DB};
 
 use super::IterResp;
 
@@ -19,13 +19,12 @@ impl Get {
         Ok(Self { key })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub fn execute(&self) -> anyhow::Result<Resp> {
         let value = DB
             .get(self)
             .map(|v| v.v_type.as_string().context("Invalid type").cloned())
             .transpose()?
             .map_or(Resp::Null, Resp::Bulk);
-        handler.write(&value).await?;
-        Ok(())
+        Ok(value)
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use std::time::Duration;
 
-use crate::{Command, Handler, Resp, Role};
+use crate::{Command, Resp, Role};
 
 use super::{IterResp, ReplConf};
 
@@ -25,11 +25,7 @@ impl Wait {
         })
     }
 
-    pub async fn apply_and_respond(
-        &self,
-        handler: &mut Handler,
-        role: &Role,
-    ) -> anyhow::Result<()> {
+    pub async fn execute(&self, role: &Role) -> anyhow::Result<Resp> {
         let Role::Master(master) = role else {
             bail!("Expected master");
         };
@@ -37,8 +33,7 @@ impl Wait {
         let master_offset = master.repl_offset();
         if master_offset == 0 {
             let count = master.slaves.read().await.len().try_into()?;
-            handler.write(&Resp::Integer(count)).await?;
-            return Ok(());
+            return Ok(Resp::Integer(count));
         }
         // {
         //     let ackreplicas = master
@@ -83,8 +78,8 @@ impl Wait {
         }
         drop(slaves);
 
-        handler.write(&Resp::Integer(processed)).await?;
-        Ok(())
+        let resp = Resp::Integer(processed);
+        Ok(resp)
     }
 }
 

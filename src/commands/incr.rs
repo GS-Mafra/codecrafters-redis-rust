@@ -4,7 +4,7 @@ use anyhow::Context;
 
 use crate::{
     db::{Type, Value},
-    slice_to_int, Handler, Resp, DB,
+    slice_to_int, Resp, DB,
 };
 
 use super::IterResp;
@@ -20,7 +20,7 @@ impl Incr {
         Ok(Self { key })
     }
 
-    pub fn apply(self) -> anyhow::Result<i64> {
+    pub fn execute(self) -> anyhow::Result<Resp> {
         let mut lock = DB.inner.write();
         let entry = lock.entry(self.key);
         // TODO store as int? https://redis.io/docs/latest/commands/incr/
@@ -46,12 +46,6 @@ impl Incr {
             }
         };
         drop(lock);
-        Ok(res)
-    }
-
-    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        let res = self.apply()?;
-        handler.write(&Resp::Integer(res)).await?;
-        Ok(())
+        Ok(Resp::Integer(res))
     }
 }

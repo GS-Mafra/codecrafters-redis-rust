@@ -1,7 +1,7 @@
 use anyhow::{bail, ensure, Context};
 use std::{str::from_utf8 as str_utf8, time::Duration};
 
-use crate::{db::stream::MaybeAuto, Handler, Resp, DB};
+use crate::{db::stream::MaybeAuto, Resp, DB};
 
 use super::IterResp;
 
@@ -62,14 +62,9 @@ impl Xadd {
         Ok(Self { key, id, k_v })
     }
 
-    #[inline]
-    pub fn apply(self) -> anyhow::Result<String> {
-        DB.xadd(self)
-    }
-
-    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        let resp = Resp::bulk(self.apply()?);
-        handler.write(&resp).await?;
-        Ok(())
+    pub fn execute(self) -> anyhow::Result<Resp> {
+        let res = DB.xadd(self)?;
+        let resp = Resp::bulk(res);
+        Ok(resp)
     }
 }

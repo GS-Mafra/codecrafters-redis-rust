@@ -11,7 +11,7 @@ use anyhow::{bail, ensure, Context};
 
 use crate::{
     db::{stream::EntryId, Stream},
-    slice_to_int, Handler, Resp, DB,
+    slice_to_int, Resp, DB,
 };
 
 use super::IterResp;
@@ -86,7 +86,7 @@ impl Xread {
         })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub async fn execute(&self) -> anyhow::Result<Resp> {
         let resp = {
             let sync = {
                 let iter = self.keys_ids.iter().filter_map(|(key, id)| match id {
@@ -107,8 +107,7 @@ impl Xread {
             }
         };
 
-        handler.write(&resp).await?;
-        Ok(())
+        Ok(resp)
     }
 
     fn get_keys_entries<'a, I, R>(&self, i: I) -> anyhow::Result<Resp>

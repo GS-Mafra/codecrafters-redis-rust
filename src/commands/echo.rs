@@ -1,7 +1,7 @@
 use anyhow::Context;
 use bytes::Bytes;
 
-use crate::{Handler, Resp};
+use crate::Resp;
 
 use super::IterResp;
 
@@ -23,8 +23,7 @@ impl Echo {
             .context("Expected bulk string")
     }
 
-    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        handler.write(&Resp::Bulk(self.msg)).await?;
-        Ok(())
+    pub fn execute(self) -> Resp {
+        Resp::Bulk(self.msg)
     }
 }

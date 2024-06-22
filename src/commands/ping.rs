@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use crate::{Handler, Resp};
+use crate::Resp;
 
 use super::IterResp;
 
@@ -19,10 +19,8 @@ impl Ping {
         Self { msg }
     }
 
-    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        let msg = self.msg.map_or_else(|| Resp::simple("PONG"), Resp::Bulk);
-        handler.write(&msg).await?;
-        Ok(())
+    pub fn execute(self) -> Resp {
+        self.msg.map_or_else(|| Resp::simple("PONG"), Resp::Bulk)
     }
 
     pub(crate) fn into_resp(self) -> Resp {

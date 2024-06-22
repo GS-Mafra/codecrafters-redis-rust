@@ -1,7 +1,7 @@
 use anyhow::Context;
 use glob_match::glob_match;
 
-use crate::{Handler, Resp, DB};
+use crate::{Resp, DB};
 
 use super::IterResp;
 
@@ -19,7 +19,7 @@ impl Keys {
         Ok(Self { pat })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub fn execute(&self) -> Resp {
         let keys = DB
             .inner
             .read()
@@ -28,8 +28,6 @@ impl Keys {
             .cloned()
             .map(Resp::bulk)
             .collect::<Vec<_>>();
-        let resp = Resp::Array(keys);
-        handler.write(&resp).await?;
-        Ok(())
+        Resp::Array(keys)
     }
 }

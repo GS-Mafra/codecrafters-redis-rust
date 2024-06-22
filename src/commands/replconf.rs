@@ -1,7 +1,7 @@
 use anyhow::{bail, ensure, Context};
 use bytes::Bytes;
 
-use crate::{Handler, Resp, Slave};
+use crate::{Resp, Slave};
 
 use super::IterResp;
 
@@ -42,23 +42,17 @@ impl ReplConf {
         })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        handler.write(&Resp::simple("OK")).await?;
-        Ok(())
+    pub fn execute(&self) -> Resp {
+        Resp::simple("OK")
     }
 
-    pub async fn apply_and_respond_slave(
-        &self,
-        handler: &mut Handler,
-        slave: &Slave,
-    ) -> anyhow::Result<()> {
+    pub fn execute_slave(&self, slave: &Slave) -> anyhow::Result<Resp> {
         let Self::GetAck = self else {
             bail!("Expected getack");
         };
 
         let resp = Self::Ack(slave.offset()).into_resp();
-        handler.write(&resp).await?;
-        Ok(())
+        Ok(resp)
     }
 
     pub(crate) fn into_resp(self) -> Resp {

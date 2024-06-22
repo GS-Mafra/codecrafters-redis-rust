@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use bytes::Bytes;
 
-use crate::{Handler, Resp, ARGUMENTS};
+use crate::{Resp, ARGUMENTS};
 
 use super::IterResp;
 
@@ -22,14 +22,13 @@ impl Config {
         })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub fn execute(&self) -> Resp {
         match self {
-            Self::Get(params) => Self::handle_get(params, handler).await?,
+            Self::Get(params) => Self::handle_get(params),
         }
-        Ok(())
     }
 
-    async fn handle_get(params: &[Bytes], handler: &mut Handler) -> anyhow::Result<()> {
+    fn handle_get(params: &[Bytes]) -> Resp {
         let v = params.iter().fold(Vec::new(), |mut acc, param| {
             match param.to_ascii_lowercase().as_slice() {
                 b"dir" => {
@@ -48,8 +47,6 @@ impl Config {
             }
             acc
         });
-        let resp = Resp::Array(v);
-        handler.write(&resp).await?;
-        Ok(())
+        Resp::Array(v)
     }
 }

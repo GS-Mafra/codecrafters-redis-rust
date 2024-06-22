@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 use anyhow::Context;
 use bytes::Bytes;
 
-use crate::{db::Type, slice_to_int, Handler, Resp, DB};
+use crate::{db::Type, slice_to_int, Resp, DB};
 
 use super::IterResp;
 
@@ -39,14 +39,8 @@ impl Set {
         Ok(Self::new(key, value, expiry))
     }
 
-    #[inline]
-    pub fn apply(self) {
+    pub fn execute(self) -> Resp {
         DB.set(self);
-    }
-
-    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
-        self.apply();
-        handler.write(&Resp::simple("OK")).await?;
-        Ok(())
+        Resp::simple("OK")
     }
 }

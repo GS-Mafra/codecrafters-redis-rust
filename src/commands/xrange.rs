@@ -3,7 +3,7 @@ use std::{ops::RangeInclusive, str::from_utf8 as str_utf8};
 
 use crate::{
     db::{stream::EntryId, Stream},
-    slice_to_int, Handler, Resp, DB,
+    slice_to_int, Resp, DB,
 };
 
 use super::IterResp;
@@ -40,7 +40,7 @@ impl Xrange {
         Ok(Self { key, range, count })
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
+    pub fn execute(&self) -> anyhow::Result<Resp> {
         let resp = DB
             .inner
             .read()
@@ -53,8 +53,8 @@ impl Xrange {
             .transpose()?
             .map(|stream| stream.iter_with_count(self.count, self.range.start()..=self.range.end()))
             .map_or_else(Vec::new, Stream::format_entries);
-        handler.write(&Resp::Array(resp)).await?;
-        Ok(())
+        let resp = Resp::Array(resp);
+        Ok(resp)
     }
 }
 

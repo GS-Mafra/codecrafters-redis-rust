@@ -1,4 +1,4 @@
-use crate::{Handler, Resp, DB};
+use crate::{Resp, DB};
 
 use super::IterResp;
 
@@ -14,14 +14,9 @@ impl Del {
         }
     }
 
-    pub fn apply(&self) -> usize {
-        DB.del(&self.keys)
-    }
-
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let deleted = self.apply();
+    pub fn execute(&self) -> anyhow::Result<Resp> {
+        let deleted = DB.del(&self.keys);
         let resp = Resp::Integer(i64::try_from(deleted)?);
-        handler.write(&resp).await?;
-        Ok(())
+        Ok(resp)
     }
 }

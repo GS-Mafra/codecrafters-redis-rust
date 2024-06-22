@@ -1,6 +1,6 @@
 use anyhow::ensure;
 
-use crate::{Handler, Resp};
+use crate::Resp;
 
 use super::IterResp;
 
@@ -16,9 +16,7 @@ impl Multi {
         Ok(Self)
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        let resp = Resp::simple("OK");
-        handler.write(&resp).await?;
-        Ok(())
+    pub fn execute() -> Resp {
+        Resp::simple("OK")
     }
 }

@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::{Handler, Master, Resp, Role, Slave};
+use crate::{Resp, Role};
 
 use super::IterResp;
 
@@ -24,41 +24,26 @@ impl Info {
         resp
     }
 
-    pub async fn apply_and_respond(
-        &self,
-        handler: &mut Handler,
-        role: &Role,
-    ) -> anyhow::Result<()> {
+    pub async fn execute(&self, role: &Role) -> anyhow::Result<Resp> {
         match self {
             Self::Replication => {
-                let resp = Resp::bulk(Replication::new(role).to_bytes().await?);
-                handler.write(&resp).await?;
-                Ok(())
+                let resp = Resp::bulk(Replication::to_bytes(role).await?);
+                Ok(resp)
             }
         }
     }
 }
 
-enum Replication<'a> {
-    Master(&'a Master),
-    Slave(&'a Slave),
-}
+struct Replication;
 
-impl<'a> Replication<'a> {
-    const fn new(role: &'a Role) -> Self {
-        match role {
-            Role::Master(master) => Self::Master(master),
-            Role::Slave(slave) => Self::Slave(slave),
-        }
-    }
-
-    async fn to_bytes(&self) -> anyhow::Result<Vec<u8>> {
+impl Replication {
+    async fn to_bytes(role: &Role) -> anyhow::Result<Vec<u8>> {
         let mut bytes = Vec::new();
 
         write!(bytes, "# Replication\r\n")?;
-        match self {
-            Self::Master(master) => {
-                write!(bytes, "role:master\r\n")?;
+        match role {
+            Role::Master(master) => {
+                write!(bytes, "Role:master\r\n")?;
                 {
                     let slaves = master.slaves.read().await;
                     write!(bytes, "connected_slaves:{}\r\n", slaves.len())?;
@@ -76,7 +61,7 @@ impl<'a> Replication<'a> {
                 write!(bytes, "master_replid:{}\r\n", master.replid())?;
                 write!(bytes, "master_repl_offset:{}\r\n", master.repl_offset())?;
             }
-            Self::Slave(slave) => {
+            Role::Slave(slave) => {
                 write!(bytes, "role:slave\r\n")?;
                 write!(bytes, "master_host:{}\r\n", slave.addr.ip())?;
                 write!(bytes, "master_port:{}\r\n", slave.addr.port())?;
