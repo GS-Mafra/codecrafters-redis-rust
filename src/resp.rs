@@ -55,7 +55,7 @@ impl Resp {
                 .map(Self::Simple)
                 .map_err(anyhow::Error::from)?,
             b'$' => 'bulk: {
-                if &cur.chunk()[..2] == b"-1" {
+                if cur.chunk().starts_with(b"-1") {
                     advance(cur, b"-1\r\n".len())?;
                     break 'bulk Self::Null;
                 }
@@ -88,7 +88,7 @@ impl Resp {
                 read_line(cur)?;
             }
             b'$' => 'bulk: {
-                if &cur.chunk()[..2] == b"-1" {
+                if cur.chunk().starts_with(b"-1") {
                     advance(cur, b"-1\r\n".len())?;
                     break 'bulk;
                 }
