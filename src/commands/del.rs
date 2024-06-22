@@ -15,7 +15,7 @@ impl Del {
     }
 
     pub fn apply(&self) -> usize {
-        DB.del(self.keys.iter())
+        DB.del(&self.keys)
     }
 
     pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {

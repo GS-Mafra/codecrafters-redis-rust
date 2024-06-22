@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::Context;
 use bytes::Bytes;
 
 use crate::{Handler, Resp};
@@ -20,11 +20,11 @@ impl Echo {
             .and_then(Resp::as_bulk)
             .cloned()
             .map(Self::new)
-            .ok_or_else(|| anyhow!("Expected bulk string"))
+            .context("Expected bulk string")
     }
 
-    pub async fn apply_and_respond(&self, handler: &mut Handler) -> anyhow::Result<()> {
-        handler.write(&Resp::Bulk(self.msg.clone())).await?;
+    pub async fn apply_and_respond(self, handler: &mut Handler) -> anyhow::Result<()> {
+        handler.write(&Resp::Bulk(self.msg)).await?;
         Ok(())
     }
 }
