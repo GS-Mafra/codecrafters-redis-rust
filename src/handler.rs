@@ -172,6 +172,11 @@ impl<'a> CommandHandler<'a> {
                 Command::Multi(_) => {
                     return Err(anyhow::anyhow!("ERR MULTI calls can not be nested").into())
                 }
+                Command::Discard(discard) => {
+                    self.queued.clear();
+                    self.transaction = false;
+                    handler.write(&discard.execute()).await?;
+                }
                 other => {
                     self.queued.push((other, raw_cmd));
                     handler.write(&Resp::simple("QUEUED")).await?;
@@ -195,6 +200,9 @@ impl<'a> CommandHandler<'a> {
         let resp = match parsed_cmd {
             Command::Exec => {
                 return Err(anyhow::anyhow!("ERR EXEC without MULTI").into());
+            }
+            Command::Discard(_) => {
+                return Err(anyhow::anyhow!("ERR DISCARD without MULTI").into());
             }
 
             Command::Set(set) => {

@@ -80,7 +80,7 @@ impl Slave {
                     handler.write(&resp).await?;
                 }
                 Ping(_) | Echo(_) | Xread(_) | Xrange(_) | Type(_) | Info(_) | Get(_)
-                | Multi(_) | Keys(_) | Psync(_) | Wait(_) | Config(_) | Exec => { /* */ }
+                | Multi(_) | Keys(_) | Psync(_) | Wait(_) | Config(_) | Discard(_) | Exec => { /* */ }
             }
             self.increase_offset(resp.len() as u64);
         }

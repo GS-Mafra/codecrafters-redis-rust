@@ -52,6 +52,9 @@ pub use multi::Multi;
 mod exec;
 pub use exec::Exec;
 
+mod discard;
+pub use discard::Discard;
+
 use anyhow::bail;
 
 use crate::Resp;
@@ -78,6 +81,7 @@ pub enum Command {
     Incr(Incr),
     Multi(Multi),
     Exec,
+    Discard(Discard),
 }
 
 impl Command {
@@ -109,6 +113,7 @@ impl Command {
             b"xread" => Self::Xread(Xread::parse(values)?),
             b"incr" => Self::Incr(Incr::parse(values)?),
             b"multi" => Self::Multi(Multi::parse(values)?),
+            b"discard" => Self::Discard(Discard::parse(values)?),
             b"exec" => {
                 Exec::parse(values)?;
                 Self::Exec
