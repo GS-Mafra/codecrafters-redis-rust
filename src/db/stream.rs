@@ -34,23 +34,25 @@ impl Stream {
 
     pub(crate) fn format_entries<'a, I>(entries: I) -> Vec<Resp>
     where
-        I: Iterator<Item = (&'a EntryId, &'a StreamValues)>,
+        I: IntoIterator<Item = (&'a EntryId, &'a StreamValues)>,
     {
-        entries.fold(Vec::new(), |mut acc, (id, key_values)| {
-            let k_v = key_values.iter().fold(
-                Vec::with_capacity(key_values.len() * 2),
-                |mut acc, (key, value)| {
-                    acc.push(Resp::bulk(key.clone()));
-                    acc.push(Resp::bulk(value.clone()));
-                    acc
-                },
-            );
+        entries
+            .into_iter()
+            .fold(Vec::new(), |mut acc, (id, key_values)| {
+                let k_v = key_values.iter().fold(
+                    Vec::with_capacity(key_values.len() * 2),
+                    |mut acc, (key, value)| {
+                        acc.push(Resp::bulk(key.clone()));
+                        acc.push(Resp::bulk(value.clone()));
+                        acc
+                    },
+                );
 
-            let values = vec![Resp::bulk(id.to_string()), Resp::Array(k_v)];
+                let values = vec![Resp::bulk(id.to_string()), Resp::Array(k_v)];
 
-            acc.push(Resp::Array(values));
-            acc
-        })
+                acc.push(Resp::Array(values));
+                acc
+            })
     }
 
     pub(crate) fn iter_with_count<R>(
