@@ -1,5 +1,6 @@
 use bytes::{Buf, Bytes, BytesMut};
 use std::{io::Cursor, net::SocketAddr};
+use thiserror::Error;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter},
     net::{
@@ -26,7 +27,7 @@ impl Handler {
             addr,
             reader: BufReader::new(reader),
             writer: BufWriter::new(writer),
-            buf: BytesMut::with_capacity(1024 * 4),
+            buf: BytesMut::with_capacity(1024),
         }
     }
 
@@ -66,7 +67,7 @@ impl Handler {
         }
     }
 
-    pub async fn write(&mut self, resp: &Resp) -> Result<(), std::io::Error> {
+    pub async fn write(&mut self, resp: &Resp) -> std::io::Result<()> {
         tracing::debug!("Writing: {resp:?}");
         match resp {
             Resp::Simple(inner) => self.write_simple(inner, '+').await?,
@@ -94,7 +95,7 @@ impl Handler {
         Ok(())
     }
 
-    async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> Result<(), std::io::Error> {
+    async fn write_bulk(&mut self, bulk: &Bytes, crlf: bool) -> std::io::Result<()> {
         self.writer.write_u8(b'$').await?;
         self.writer
             .write_all(bulk.len().to_string().as_bytes())
@@ -107,8 +108,8 @@ impl Handler {
         Ok(())
     }
 
-    async fn write_simple(&mut self, simple: &str, char: char) -> Result<(), std::io::Error> {
-        self.writer.write_u8(char as u8).await?;
+    async fn write_simple(&mut self, simple: &str, c: char) -> std::io::Result<()> {
+        self.writer.write_u8(c as u8).await?;
         self.writer.write_all(simple.as_bytes()).await?;
         self.writer.write_all(b"\r\n").await?;
         Ok(())
@@ -123,75 +124,179 @@ impl Handler {
     }
 }
 
-pub async fn handle_connection(mut handler: Handler, role: &Role) -> anyhow::Result<()> {
-    use Command::{
-        Config, Del, Echo, Get, Info, Keys, Ping, Psync, ReplConf, Set, Type, Wait, Xadd, Xrange,
-        Xread,
-    };
+#[allow(clippy::module_name_repetitions)]
+pub struct CommandHandler<'a> {
+    handler: Option<Handler>,
+    role: &'a Role,
+    queued: Vec<(Command, Vec<Resp>)>,
+    transaction: bool,
+}
 
-    loop {
+#[allow(clippy::unused_async)]
+impl<'a> CommandHandler<'a> {
+    pub const fn new(handler: Handler, role: &'a Role) -> Self {
+        Self {
+            handler: Some(handler),
+            role,
+            queued: Vec::new(),
+            transaction: false,
+        }
+    }
+
+    pub async fn handle_commands(&mut self) -> anyhow::Result<()> {
+        loop {
+            match self.handle_command().await {
+                Ok(()) => (),
+                Err(CommandError::Finished | CommandError::Replicated) => return Ok(()),
+                Err(e) => {
+                    unsafe { self.handler.as_mut().unwrap_unchecked() }
+                        .write(&Resp::Err(e.to_string()))
+                        .await?;
+                }
+            }
+        }
+    }
+
+    async fn handle_command(&mut self) -> Result<(), CommandError> {
+        let handler = unsafe { self.handler.as_mut().unwrap_unchecked() };
+
         let Some(resp) = handler.read().await? else {
+            return Err(CommandError::Finished);
+        };
+
+        let (parsed_cmd, raw_cmd) = Command::parse(&resp)?;
+
+        if self.transaction {
+            match parsed_cmd {
+                Command::Exec => self.apply_exec().await?,
+                Command::Multi(_) => {
+                    return Err(anyhow::anyhow!("ERR MULTI calls can not be nested").into())
+                }
+                other => {
+                    self.queued.push((other, raw_cmd));
+                    handler.write(&Resp::simple("QUEUED")).await?;
+                }
+            }
             return Ok(());
         };
 
-        let (parsed_cmd, raw_cmd) = match Command::parse(&resp) {
-            Ok(res) => res,
-            Err(e) => {
-                handler.write(&Resp::Err(e.to_string())).await?;
-                continue;
-            }
-        };
+        let resp = self.apply_commands(parsed_cmd, raw_cmd).await?;
+        unsafe { self.handler.as_mut().unwrap_unchecked() }
+            .write(&resp)
+            .await?;
+        Ok(())
+    }
 
-        let res = match parsed_cmd {
-            Ping(ping) => ping.apply_and_respond(&mut handler).await,
-            Echo(echo) => echo.apply_and_respond(&mut handler).await,
-            Get(get) => get.apply_and_respond(&mut handler).await,
-            Set(set) => {
-                let res = set.apply_and_respond(&mut handler).await;
-                propagate(role, raw_cmd).await;
-                res
+    async fn apply_commands(
+        &mut self,
+        parsed_cmd: Command,
+        raw_cmd: Vec<Resp>,
+    ) -> Result<Resp, CommandError> {
+        let resp = match parsed_cmd {
+            Command::Exec => {
+                return Err(anyhow::anyhow!("ERR EXEC without MULTI").into());
             }
-            Del(del) => {
-                let res = del.apply_and_respond(&mut handler).await;
-                propagate(role, raw_cmd).await;
-                res
+
+            Command::Set(set) => {
+                let resp = set.execute();
+                propagate(self.role, raw_cmd).await;
+                resp
             }
-            Xadd(xadd) => {
-                let res = xadd.apply_and_respond(&mut handler).await;
-                propagate(role, raw_cmd).await;
-                res
+            Command::Del(del) => {
+                let resp = del.execute()?;
+                propagate(self.role, raw_cmd).await;
+                resp
             }
-            Info(info) => info.apply_and_respond(&mut handler, role).await,
-            ReplConf(replconf) => replconf.apply_and_respond(&mut handler).await,
-            Wait(wait) => wait.apply_and_respond(&mut handler, role).await,
-            Config(config) => config.apply_and_respond(&mut handler).await,
-            Keys(keys) => keys.apply_and_respond(&mut handler).await,
-            Type(r#type) => r#type.apply_and_respond(&mut handler).await,
-            Xrange(xrange) => xrange.apply_and_respond(&mut handler).await,
-            Xread(xread) => xread.apply_and_respond(&mut handler).await,
-            Psync(psync) => 'psync: {
-                let Role::Master(master) = role else {
-                    break 'psync Ok(());
+            Command::Xadd(xadd) => {
+                let resp = xadd.execute()?;
+                propagate(self.role, raw_cmd).await;
+                resp
+            }
+            Command::Incr(incr) => {
+                let resp = incr.execute()?;
+                propagate(self.role, raw_cmd).await;
+                resp
+            }
+
+            Command::Ping(ping) => ping.execute(),
+            Command::Echo(echo) => echo.execute(),
+            Command::Get(get) => get.execute()?,
+            Command::Config(config) => config.execute(),
+            Command::Keys(keys) => keys.execute(),
+            Command::Type(r#type) => r#type.execute(),
+            Command::Xrange(xrange) => xrange.execute()?,
+            Command::Xread(xread) => xread.execute().await?,
+
+            Command::Info(info) => info.execute(self.role).await?,
+            Command::Wait(wait) => wait.execute(self.role).await?,
+
+            Command::Multi(multi) => {
+                let resp = multi.execute();
+                self.transaction = true;
+                resp
+            }
+
+            Command::ReplConf(replconf) => replconf.execute(),
+            Command::Psync(psync) => {
+                if self.transaction {
+                    return Err(
+                        anyhow::anyhow!("ERR Command not allowed inside a transaction").into(),
+                    );
+                }
+
+                let Role::Master(master) = self.role else {
+                    return Err(anyhow::anyhow!("").into()); // FIXME
                 };
-                let res = psync.apply_and_respond(&mut handler, master).await;
-                match res {
-                    Ok(()) => {
+                match psync.execute(master) {
+                    Ok((resp, data)) => {
+                        let mut handler = self.handler.take().unwrap();
+                        handler.write(&resp).await?;
+                        handler.write(&data).await?;
                         master.add_slave(handler).await;
-                        return Ok(());
+                        return Err(CommandError::Replicated);
                     }
-                    Err(e) => Err(e),
+                    Err(e) => return Err(e.into()),
                 }
             }
         };
-        if let Err(e) = res {
-            handler.write(&Resp::Err(e.to_string())).await?;
+        Ok(resp)
+    }
+
+    async fn apply_exec(&mut self) -> anyhow::Result<()> {
+        let mut queue_res = Vec::with_capacity(self.queued.len());
+        let queue = std::mem::take(&mut self.queued); // FIXME use Vec::drain
+
+        for (parsed_cmd, raw_cmd) in queue {
+            let resp = self
+                .apply_commands(parsed_cmd, raw_cmd)
+                .await
+                .unwrap_or_else(|e| Resp::Err(e.to_string()));
+            queue_res.push(resp);
         }
+
+        self.transaction = false;
+        unsafe { self.handler.as_mut().unwrap_unchecked() }
+            .write(&Resp::Array(queue_res))
+            .await?;
+        Ok(())
     }
 }
 
-async fn propagate(role: &Role, command: &[Resp]) {
+#[derive(Debug, Error)]
+pub enum CommandError {
+    #[error("No more bytes to read from tcpstream")]
+    Finished,
+    #[error("Handler was taken for replication")]
+    Replicated,
+    #[error(transparent)]
+    IO(#[from] std::io::Error),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+async fn propagate(role: &Role, command: Vec<Resp>) {
     if let Role::Master(master) = role {
-        let command = Resp::Array(command.to_owned());
+        let command = Resp::Array(command);
         master.propagate(&command, true).await;
     }
 }

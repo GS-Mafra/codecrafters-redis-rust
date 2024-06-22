@@ -42,6 +42,7 @@ impl ReplConf {
         })
     }
 
+    #[allow(clippy::unused_self)]
     pub fn execute(&self) -> Resp {
         Resp::simple("OK")
     }

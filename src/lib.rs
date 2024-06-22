@@ -7,7 +7,7 @@ mod commands;
 pub use commands::Command;
 
 mod handler;
-pub use handler::{handle_connection, Handler};
+pub use handler::{CommandHandler, Handler};
 
 pub mod roles;
 pub use roles::{Master, Role, Slave};

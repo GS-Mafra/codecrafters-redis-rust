@@ -16,7 +16,8 @@ impl Multi {
         Ok(Self)
     }
 
-    pub fn execute() -> Resp {
+    #[allow(clippy::unused_self)]
+    pub fn execute(&self) -> Resp {
         Resp::simple("OK")
     }
 }

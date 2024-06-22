@@ -48,6 +48,9 @@ impl Slave {
     }
 
     async fn handle_connection(&self, mut handler: Handler) -> anyhow::Result<()> {
+        #[allow(clippy::enum_glob_use)]
+        use Command::*;
+
         loop {
             let Some(resp) = handler.read().await? else {
                 return Ok(());
@@ -60,18 +63,25 @@ impl Slave {
                 }
             };
             match parsed_cmd {
-                Command::Set(set) => set.apply(),
-                Command::Del(del) => {
-                    del.apply();
+                Set(set) => {
+                    let _ = set.execute();
                 }
-                Command::Xadd(xadd) => {
-                    let _ = xadd.apply();
+                Del(del) => {
+                    let _ = del.execute();
                 }
-                Command::ReplConf(replconf) => {
-                    replconf.apply_and_respond_slave(&mut handler, self).await?;
+                Xadd(xadd) => {
+                    let _ = xadd.execute();
                 }
-                _ => (),
-            };
+                Incr(incr) => {
+                    let _ = incr.execute();
+                }
+                ReplConf(replconf) => {
+                    let resp = replconf.execute_slave(self)?;
+                    handler.write(&resp).await?;
+                }
+                Ping(_) | Echo(_) | Xread(_) | Xrange(_) | Type(_) | Info(_) | Get(_)
+                | Multi(_) | Keys(_) | Psync(_) | Wait(_) | Config(_) | Exec => { /* */ }
+            }
             self.increase_offset(resp.len() as u64);
         }
     }

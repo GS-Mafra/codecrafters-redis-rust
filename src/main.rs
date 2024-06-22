@@ -8,7 +8,7 @@ use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
-use redis_starter_rust::{handle_connection, Handler, Role, ARGUMENTS, DB};
+use redis_starter_rust::{CommandHandler, Handler, Role, ARGUMENTS, DB};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,9 +16,10 @@ async fn main() -> anyhow::Result<()> {
     let _guard = init_log(ARGUMENTS.port);
     tracing::debug!("{:#?}", *ARGUMENTS);
 
-    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port))
-        .await
-        .unwrap();
+    let listener = {
+        let addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, ARGUMENTS.port);
+        TcpListener::bind(addr).await?
+    };
 
     load_rdb()?;
 
@@ -30,7 +31,8 @@ async fn main() -> anyhow::Result<()> {
         match listener.accept().await {
             Ok((stream, _)) => {
                 tokio::spawn(async move {
-                    handle_connection(Handler::new(stream), &ARGUMENTS.role)
+                    CommandHandler::new(Handler::new(stream), &ARGUMENTS.role)
+                        .handle_commands()
                         .await
                         .inspect_err(|e| tracing::error!("{e}"))
                 });

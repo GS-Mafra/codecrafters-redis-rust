@@ -36,6 +36,7 @@ impl Psync {
         Ok(Self { id, offset })
     }
 
+    #[allow(clippy::unused_self)]
     pub fn execute(&self, master: &Master) -> anyhow::Result<(Resp, Resp)> {
         let master_replid = master.replid();
         let master_repl_offset = master.repl_offset();
