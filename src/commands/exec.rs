@@ -8,7 +8,7 @@ impl Exec {
     pub(super) fn parse(mut i: IterResp) -> anyhow::Result<()> {
         ensure!(
             i.next().is_none(),
-            "ERR wrong number of arguments for 'multi' command"
+            "ERR wrong number of arguments for 'exec' command"
         );
         Ok(())
     }
