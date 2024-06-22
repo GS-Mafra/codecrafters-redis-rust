@@ -132,7 +132,6 @@ pub struct CommandHandler<'a> {
     transaction: bool,
 }
 
-#[allow(clippy::unused_async)]
 impl<'a> CommandHandler<'a> {
     pub const fn new(handler: Handler, role: &'a Role) -> Self {
         Self {
