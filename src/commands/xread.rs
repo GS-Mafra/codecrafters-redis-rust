@@ -1,5 +1,8 @@
 use std::{
-    ops::Bound::{self, Excluded, Included, Unbounded},
+    ops::{
+        Bound::{Excluded, Unbounded},
+        RangeBounds,
+    },
     str::from_utf8 as str_utf8,
     time::Duration,
 };
@@ -97,7 +100,7 @@ impl Xread {
             if sync != Resp::Null {
                 sync
             } else if let Some((key, id)) = self.first_unblocked().await? {
-                let iter = std::iter::once((&key, (Included(id), Unbounded)));
+                let iter = std::iter::once((&key, id..));
                 self.get_keys_entries(iter)?
             } else {
                 Resp::Null
@@ -108,9 +111,10 @@ impl Xread {
         Ok(())
     }
 
-    fn get_keys_entries<'a, I>(&self, i: I) -> anyhow::Result<Resp>
+    fn get_keys_entries<'a, I, R>(&self, i: I) -> anyhow::Result<Resp>
     where
-        I: Iterator<Item = (&'a String, (Bound<EntryId>, Bound<EntryId>))>,
+        I: IntoIterator<Item = (&'a String, R)>,
+        R: RangeBounds<EntryId>,
     {
         let lock = DB.inner.read();
 
