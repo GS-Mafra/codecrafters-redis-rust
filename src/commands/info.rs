@@ -43,7 +43,7 @@ impl Replication {
         write!(bytes, "# Replication\r\n")?;
         match role {
             Role::Master(master) => {
-                write!(bytes, "Role:master\r\n")?;
+                write!(bytes, "role:master\r\n")?;
                 {
                     let slaves = master.slaves.read().await;
                     write!(bytes, "connected_slaves:{}\r\n", slaves.len())?;
