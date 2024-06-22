@@ -149,7 +149,7 @@ impl MaybeAuto {
             Self::Auto => {
                 let ms_time = UNIX_EPOCH.elapsed()?;
                 let sq_num = last_entry.map_or(0, |(last_key, _)| {
-                    if last_key.ms_time == ms_time {
+                    if last_key.ms_time.as_millis() == ms_time.as_millis() {
                         last_key.sq_num + 1
                     } else {
                         0
